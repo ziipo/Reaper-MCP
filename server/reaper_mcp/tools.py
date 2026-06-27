@@ -29,6 +29,23 @@ def _first(result: list, default=None):
     return result[0] if result else default
 
 
+def call_reascript(bridge: ReaperBridge, fn: str, args: list | None = None) -> list:
+    """Escape hatch: invoke ANY reaper.* function by name and return its results.
+
+    `fn` is the ReaScript function name without the `reaper.` prefix (e.g.
+    "CountTracks", "SetMediaTrackInfo_Value"). `args` is the positional argument
+    list. Returns the list of all Lua return values.
+
+    Limitations:
+      - Opaque pointers (MediaTrack*, MediaItem*, take, etc.) cannot cross the
+        bridge: they come back as "<userdata>" and cannot be passed in. For
+        functions that take a track, pass a 0-based track INDEX where the bridge
+        knows to resolve it (see TRACK_ARG_FNS in the Lua bridge); for arbitrary
+        pointer chaining, add a composite helper in mcp_helpers.lua instead.
+    """
+    return bridge.call(fn, *(args or []))
+
+
 def list_tracks(bridge: ReaperBridge) -> list[dict]:
     """Return all tracks with index, name, volume (dB), and mute state."""
     count = _first(bridge.call("CountTracks", 0), 0)

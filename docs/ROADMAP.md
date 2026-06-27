@@ -24,15 +24,35 @@ From the proven vertical slice to full Reaper control.
 
 ---
 
-## Phase 0 — Passthrough + test harness (immediate)
+## Audio feedback loop (cross-cutting — accelerates ALL phases)
 
-- [ ] `call_reascript(fn, args)` generic tool → any `reaper.*` function.
-      Document the opaque-pointer limitation (use composites for chaining).
-- [ ] Promote scratchpad fake-Lua responder into `server/tests/` (pytest):
-      transport, tools, dB conversion, error/timeout paths.
-- [ ] `bridge/selftest.lua` — a ReaScript that exercises the bridge in-process
-      and prints pass/fail to the console (catches API drift the fake can't).
-- [ ] CI-style runner script (`make test` / `uv run pytest`).
+Borrowed wholesale from `abletest/abletonosc_cli/gemini.py` → lives at
+`server/reaper_mcp/gemini.py`. Sends rendered audio to Gemini's audio-understanding
+model so the agent can **"hear" its own renders** and self-critique without waiting
+for human feedback. `GEMINI_API_KEY` comes from repo-root `.env`.
+
+- `critique_audio(path, ask=?)` — structured JSON critique, or a free-form answer
+  to a specific question (e.g. "is the kick too loud?", "what key is this in?").
+- Inline base64, 20 MB ceiling (our short MP3 renders are tiny). Default model
+  `gemini-3.5-flash`; `gemini-3.1-flash-lite` for cheap qualitative passes.
+
+Why cross-cutting: any phase that produces audio (render, FX, mix changes) can
+close the loop — render → critique → adjust — autonomously. Use it as a
+verification step in the test harness and in iterative composition workflows.
+- [ ] Expose as an MCP tool `critique_render(path, ask?)` so the model can call it.
+- [ ] Use it internally during dev to validate audio changes before asking the human.
+
+## Phase 0 — Passthrough + test harness (DONE)
+
+- [x] `call_reascript(fn, args)` generic tool → any `reaper.*` function.
+      Documents the opaque-pointer limitation (use composites for chaining).
+- [x] Promoted scratchpad fake-Lua responder into `server/tests/` (pytest):
+      transport, tools, dB conversion, error/timeout paths. 18 tests passing.
+- [x] `bridge/selftest.lua` — a ReaScript that exercises the live API + helpers
+      on a throwaway tab and prints pass/fail (catches drift the fake can't).
+- [x] Borrowed `gemini.py` audio-feedback module + exposed `critique_render` tool.
+      Verified live against t001 render.
+- [x] Test runner: `cd server && uv run pytest -q`.
 
 ## Phase A — Stable object model (foundational)
 

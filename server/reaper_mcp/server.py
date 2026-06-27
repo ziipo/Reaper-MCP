@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from . import tools
+from . import gemini, tools
 from .bridge import BridgeError, ReaperBridge
 
 mcp = FastMCP("reaper")
@@ -20,6 +20,19 @@ def _guard(fn, *args, **kwargs):
         raise RuntimeError(f"Reaper bridge error: {e}") from e
     except ValueError as e:
         raise RuntimeError(str(e)) from e
+
+
+@mcp.tool()
+def call_reascript(fn: str, args: list | None = None) -> list:
+    """Invoke any ReaScript function by name (escape hatch for full API coverage).
+
+    `fn`: function name without the `reaper.` prefix (e.g. "CountTracks").
+    `args`: positional arguments. Returns all Lua return values as a list.
+
+    Note: opaque pointers can't cross the bridge. Pass a 0-based track INDEX for
+    track-taking functions; for pointer chaining add a composite in mcp_helpers.lua.
+    """
+    return _guard(tools.call_reascript, fn, args)
 
 
 @mcp.tool()
@@ -133,6 +146,20 @@ def set_time_selection(start_sec: float, end_sec: float) -> dict:
 def render_mp3(directory: str, filename: str, length_sec: float) -> dict:
     """Render the project (0..length_sec) to an MP3 at directory/filename."""
     return _guard(tools.render_mp3, directory, filename, length_sec)
+
+
+@mcp.tool()
+def critique_render(path: str, ask: str | None = None) -> dict:
+    """Send a rendered audio file to Gemini to "listen" and critique it.
+
+    Without `ask`, returns a structured production critique (mix issues,
+    arrangement, suggestions). With `ask`, answers a specific question about the
+    audio (e.g. "is the kick too loud?", "what key is this in?").
+    """
+    try:
+        return gemini.critique_audio(path, ask=ask)
+    except gemini.GeminiError as e:
+        raise RuntimeError(f"Gemini critique error: {e}") from e
 
 
 def main() -> None:
