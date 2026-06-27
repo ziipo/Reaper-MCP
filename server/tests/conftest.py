@@ -21,11 +21,33 @@ from reaper_mcp.bridge import ReaperBridge
 class FakeReaper:
     """A tiny in-memory model of a Reaper project for deterministic tests."""
 
+    _guid_counter = 0
+
     def __init__(self) -> None:
-        # each track: {"name", "vol" (amp), "mute", "items": [..], "fx": [..]}
+        # each track: {"name", "vol", "mute", "pan", "solo", "arm", "guid",
+        #              "items": [{"notes":[...], "position","length","mute"}], "fx": []}
         self.tracks: list[dict] = []
         self.play_state = 0
         self.bpm = 120.0
+        self.markers: list[dict] = []
+        self.cursor = 0.0
+
+    def _new_track(self) -> dict:
+        FakeReaper._guid_counter += 1
+        return {"name": "", "vol": 1.0, "mute": 0.0, "pan": 0.0, "solo": 0.0,
+                "arm": 0.0, "guid": "{GUID-%d}" % FakeReaper._guid_counter,
+                "items": [], "fx": []}
+
+    def _resolve_track_idx(self, sel):
+        """A selector is an int index or a GUID string -> index, or None."""
+        if isinstance(sel, int):
+            return sel if 0 <= sel < len(self.tracks) else None
+        if isinstance(sel, str):
+            g = sel.replace("guid:", "")
+            for i, t in enumerate(self.tracks):
+                if t["guid"] == g:
+                    return i
+        return None
 
     # -- ReaScript function model ------------------------------------------
 
@@ -36,8 +58,7 @@ class FakeReaper:
             return [len(self.tracks)]
         if fn == "InsertTrackAtIndex":
             idx = int(args[0])
-            self.tracks.insert(idx, {"name": "", "vol": 1.0, "mute": 0.0,
-                                     "items": [], "fx": []})
+            self.tracks.insert(idx, self._new_track())
             return []
         if fn == "DeleteTrack":
             idx = int(args[0])
@@ -92,10 +113,12 @@ class FakeReaper:
             self.tracks[idx]["fx"].append(name)
             return [len(self.tracks[idx]["fx"]) - 1]
         if fn == "MCP.create_midi_item_with_notes":
-            idx, _s, _e, notes = args
-            if idx >= len(self.tracks):
-                raise RuntimeError("no track at index %s" % idx)
-            self.tracks[idx]["items"].append({"notes": notes})
+            sel, start, end, notes = args
+            idx = self._resolve_track_idx(sel)
+            if idx is None:
+                raise RuntimeError("no track at %s" % sel)
+            self.tracks[idx]["items"].append(
+                {"notes": list(notes), "position": start, "length": end - start})
             return [len(self.tracks[idx]["items"]) - 1, len(notes)]
         if fn == "MCP.render_mp3":
             d, fname, _end = args
@@ -103,6 +126,141 @@ class FakeReaper:
         if fn == "MCP.ping":
             return ["pong", ["add_fx", "create_midi_item_with_notes",
                              "render_mp3", "set_tempo"]]
+        if fn == "MCP.reload":
+            return ["reloaded"]
+
+        # -- Phase A --
+        if fn == "MCP.describe_project":
+            include_items = args[0] if args else True
+            include_fx = args[1] if len(args) > 1 else True
+            tracks = []
+            for i, t in enumerate(self.tracks):
+                d = {"index": i, "guid": t["guid"], "name": t["name"],
+                     "volume": t["vol"], "pan": t["pan"],
+                     "muted": t["mute"] != 0, "soloed": t["solo"] != 0,
+                     "armed": t["arm"] != 0, "item_count": len(t["items"]),
+                     "fx_count": len(t["fx"])}
+                if include_items:
+                    d["items"] = [{"index": j, "position": it.get("position", 0),
+                                   "length": it.get("length", 0),
+                                   "muted": False, "take_name": "",
+                                   "is_midi": True}
+                                  for j, it in enumerate(t["items"])]
+                if include_fx:
+                    d["fx"] = [{"index": k, "name": nm, "enabled": True}
+                               for k, nm in enumerate(t["fx"])]
+                tracks.append(d)
+            return [{"name": "test", "tempo": self.bpm,
+                     "play_state": self.play_state,
+                     "track_count": len(self.tracks), "tracks": tracks}]
+        if fn == "MCP.get_track_guid":
+            idx = self._resolve_track_idx(args[0])
+            if idx is None:
+                raise RuntimeError("no track")
+            return [self.tracks[idx]["guid"]]
+
+        # -- Phase B: track editing --
+        if fn == "MCP.set_track_value":
+            idx = self._resolve_track_idx(args[0])
+            if idx is None:
+                raise RuntimeError("no track")
+            key = {"D_PAN": "pan", "I_SOLO": "solo", "I_RECARM": "arm",
+                   "D_VOL": "vol", "B_MUTE": "mute"}.get(args[1])
+            if key:
+                self.tracks[idx][key] = args[2]
+            return [True]
+        if fn == "MCP.get_track_value":
+            idx = self._resolve_track_idx(args[0])
+            if idx is None:
+                raise RuntimeError("no track")
+            key = {"D_PAN": "pan", "I_SOLO": "solo", "I_RECARM": "arm",
+                   "D_VOL": "vol", "B_MUTE": "mute"}.get(args[1], "pan")
+            return [self.tracks[idx][key]]
+        if fn == "MCP.set_track_color":
+            idx = self._resolve_track_idx(args[0])
+            if idx is None:
+                raise RuntimeError("no track")
+            return [True]
+        if fn == "MCP.move_track":
+            idx = self._resolve_track_idx(args[0])
+            if idx is None:
+                raise RuntimeError("no track")
+            t = self.tracks.pop(idx)
+            self.tracks.insert(args[1], t)
+            return [True]
+        if fn == "MCP.set_folder_depth":
+            idx = self._resolve_track_idx(args[0])
+            if idx is None:
+                raise RuntimeError("no track")
+            return [True]
+
+        # -- Phase B: items --
+        if fn == "MCP.set_item_bounds":
+            idx = self._resolve_track_idx(args[0])
+            it = self.tracks[idx]["items"][args[1]]
+            if args[2] is not None:
+                it["position"] = args[2]
+            if args[3] is not None:
+                it["length"] = args[3]
+            return [it.get("position", 0), it.get("length", 0)]
+        if fn == "MCP.set_item_fades":
+            return [True]
+        if fn == "MCP.split_item":
+            return [True]
+        if fn == "MCP.delete_item":
+            idx = self._resolve_track_idx(args[0])
+            self.tracks[idx]["items"].pop(args[1])
+            return [True]
+        if fn == "MCP.move_item_to_track":
+            si = self._resolve_track_idx(args[0])
+            di = self._resolve_track_idx(args[2])
+            it = self.tracks[si]["items"].pop(args[1])
+            self.tracks[di]["items"].append(it)
+            return [True]
+
+        # -- Phase B: MIDI --
+        if fn == "MCP.get_notes":
+            idx = self._resolve_track_idx(args[0])
+            notes = self.tracks[idx]["items"][args[1]]["notes"]
+            return [[{"index": j, "start_qn": n[0], "end_qn": n[1],
+                      "pitch": n[2], "vel": n[3] if len(n) > 3 else 96,
+                      "chan": n[4] if len(n) > 4 else 0,
+                      "muted": False, "selected": False}
+                     for j, n in enumerate(notes)]][0]
+        if fn == "MCP.add_notes":
+            idx = self._resolve_track_idx(args[0])
+            self.tracks[idx]["items"][args[1]]["notes"].extend(args[2])
+            return [len(args[2])]
+        if fn == "MCP.set_note":
+            idx = self._resolve_track_idx(args[0])
+            note = self.tracks[idx]["items"][args[1]]["notes"][args[2]]
+            f = args[3] or {}
+            if "pitch" in f:
+                note[2] = f["pitch"]
+            return [True]
+        if fn == "MCP.delete_note":
+            idx = self._resolve_track_idx(args[0])
+            self.tracks[idx]["items"][args[1]]["notes"].pop(args[2])
+            return [True]
+
+        # -- Phase B: markers --
+        if fn == "MCP.add_marker":
+            num = len(self.markers) + 1
+            self.markers.append({"number": num, "name": args[1],
+                                 "position": args[0],
+                                 "is_region": bool(args[2])})
+            return [num]
+        if fn == "MCP.delete_marker":
+            before = len(self.markers)
+            self.markers = [m for m in self.markers if m["number"] != args[0]]
+            return [len(self.markers) < before]
+        if fn == "MCP.list_markers":
+            return [[dict(m, enum_index=i, region_end=m["position"])
+                     for i, m in enumerate(self.markers)]][0]
+        if fn == "MCP.set_cursor":
+            self.cursor = args[0]
+            return [self.cursor]
+
         # unknown
         raise RuntimeError("unknown function: %s" % fn)
 

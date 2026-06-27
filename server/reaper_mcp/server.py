@@ -148,6 +148,162 @@ def render_mp3(directory: str, filename: str, length_sec: float) -> dict:
     return _guard(tools.render_mp3, directory, filename, length_sec)
 
 
+# -- Phase A: introspection & addressing -------------------------------------
+# Track selectors accept a 0-based index OR a GUID string (from describe_project
+# / get_track_guid). GUIDs survive reorder/insert/delete.
+
+
+@mcp.tool()
+def describe_project(include_items: bool = True, include_fx: bool = True) -> dict:
+    """Get the full project tree (tracks, items, FX) with stable GUIDs.
+
+    Best first call to understand current project state. GUIDs from here can be
+    passed as the `track` argument to most tools and survive edits/reorders.
+    """
+    return _guard(tools.describe_project, include_items, include_fx)
+
+
+@mcp.tool()
+def get_track_guid(track: object) -> str:
+    """Get a track's stable GUID (pass index or existing GUID)."""
+    return _guard(tools.get_track_guid, track)
+
+
+# -- Phase B: track editing --------------------------------------------------
+
+
+@mcp.tool()
+def set_track_color(track: object, r: int, g: int, b: int) -> dict:
+    """Set a track's color from RGB (0-255)."""
+    return _guard(tools.set_track_color, track, r, g, b)
+
+
+@mcp.tool()
+def set_track_pan(track: object, pan: float) -> dict:
+    """Set track pan (-1 left .. 0 center .. 1 right)."""
+    return _guard(tools.set_track_pan, track, pan)
+
+
+@mcp.tool()
+def set_track_solo(track: object, soloed: bool) -> dict:
+    """Solo or unsolo a track."""
+    return _guard(tools.set_track_solo, track, soloed)
+
+
+@mcp.tool()
+def set_track_arm(track: object, armed: bool) -> dict:
+    """Record-arm or disarm a track."""
+    return _guard(tools.set_track_arm, track, armed)
+
+
+@mcp.tool()
+def move_track(track: object, dest_index: int) -> dict:
+    """Move a track to a new 0-based position."""
+    return _guard(tools.move_track, track, dest_index)
+
+
+@mcp.tool()
+def set_folder_depth(track: object, depth: int) -> dict:
+    """Set folder depth: 1=start folder, 0=normal, -1=close folder."""
+    return _guard(tools.set_folder_depth, track, depth)
+
+
+# -- Phase B: media item editing ---------------------------------------------
+
+
+@mcp.tool()
+def set_item_bounds(
+    track: object, item_index: int,
+    position: float | None = None, length: float | None = None,
+) -> dict:
+    """Set a media item's position and/or length (seconds)."""
+    return _guard(tools.set_item_bounds, track, item_index, position, length)
+
+
+@mcp.tool()
+def set_item_fades(
+    track: object, item_index: int,
+    fadein_sec: float | None = None, fadeout_sec: float | None = None,
+) -> dict:
+    """Set a media item's fade-in/out lengths (seconds)."""
+    return _guard(tools.set_item_fades, track, item_index, fadein_sec, fadeout_sec)
+
+
+@mcp.tool()
+def split_item(track: object, item_index: int, position: float) -> dict:
+    """Split a media item at a project-time position (seconds)."""
+    return _guard(tools.split_item, track, item_index, position)
+
+
+@mcp.tool()
+def delete_item(track: object, item_index: int) -> dict:
+    """Delete a media item from a track."""
+    return _guard(tools.delete_item, track, item_index)
+
+
+@mcp.tool()
+def move_item_to_track(src_track: object, item_index: int, dest_track: object) -> dict:
+    """Move a media item to another track."""
+    return _guard(tools.move_item_to_track, src_track, item_index, dest_track)
+
+
+# -- Phase B: MIDI editing ---------------------------------------------------
+
+
+@mcp.tool()
+def get_notes(track: object, item_index: int) -> list[dict]:
+    """Read all MIDI notes from an item (positions in quarter notes)."""
+    return _guard(tools.get_notes, track, item_index)
+
+
+@mcp.tool()
+def add_notes(track: object, item_index: int, notes: list[dict]) -> dict:
+    """Append MIDI notes to an item. Each: {start_qn,end_qn,pitch,vel?,chan?}."""
+    return _guard(tools.add_notes, track, item_index, notes)
+
+
+@mcp.tool()
+def set_note(track: object, item_index: int, note_index: int, fields: dict) -> dict:
+    """Edit a note. fields: pitch, vel, start_qn, end_qn, chan, muted (any subset)."""
+    return _guard(tools.set_note, track, item_index, note_index, fields)
+
+
+@mcp.tool()
+def delete_note(track: object, item_index: int, note_index: int) -> dict:
+    """Delete a MIDI note by index."""
+    return _guard(tools.delete_note, track, item_index, note_index)
+
+
+# -- Phase B: markers & regions ----------------------------------------------
+
+
+@mcp.tool()
+def add_marker(
+    position: float, name: str = "", is_region: bool = False,
+    region_end: float | None = None, rgb: list[int] | None = None,
+) -> dict:
+    """Add a marker, or a region if is_region=True. Returns its index number."""
+    return _guard(tools.add_marker, position, name, is_region, region_end, rgb)
+
+
+@mcp.tool()
+def delete_marker(index_number: int, is_region: bool = False) -> dict:
+    """Delete a marker/region by its display index number."""
+    return _guard(tools.delete_marker, index_number, is_region)
+
+
+@mcp.tool()
+def list_markers() -> list[dict]:
+    """List all markers and regions."""
+    return _guard(tools.list_markers)
+
+
+@mcp.tool()
+def set_cursor(position: float, move_view: bool = False) -> dict:
+    """Move the edit cursor to a project-time position (seconds)."""
+    return _guard(tools.set_cursor, position, move_view)
+
+
 @mcp.tool()
 def critique_render(path: str, ask: str | None = None) -> dict:
     """Send a rendered audio file to Gemini to "listen" and critique it.

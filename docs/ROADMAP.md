@@ -54,26 +54,25 @@ verification step in the test harness and in iterative composition workflows.
       Verified live against t001 render.
 - [x] Test runner: `cd server && uv run pytest -q`.
 
-## Phase A — Stable object model (foundational)
+## Phase A — Stable object model (DONE)
 
-The enabler for everything else. Today references are integer indices that break
-on insert/delete/reorder.
+The enabler for everything else. Track references now survive insert/delete/reorder.
 
-- [ ] GUID-based handles: resolve a reference by index **or** GUID server-side
-      (`GetTrackGUID`, item/FX GUIDs). Selector grammar like
-      `track[2].item[0].take[0].fx[1]` or `{"track":"guid:..."}`.
-- [ ] Lua resolver layer that dereferences selectors → pointers; replaces the
-      ad-hoc `TRACK_ARG_FNS` index map.
-- [ ] `describe_project()` — one batched read returning the object tree
-      (tracks→items→takes→fx, with GUIDs). Gives the LLM context cheaply.
+- [x] GUID-based handles: `resolve_track` accepts an index **or** a GUID string;
+      `resolve_item` = {track_sel, item_index}. Verified live (GUID survives reorder).
+- [x] Lua resolver layer (`mcp_helpers.lua: resolve_track/resolve_item`); bridge
+      `resolve_args` now accepts GUIDs for raw track functions too.
+- [x] `describe_project(include_items?, include_fx?)` — object tree with GUIDs,
+      FX names, item positions/MIDI flags. Verified on the LoFi project.
 
-## Phase B — Core editing breadth (mostly passthrough + thin composites)
+## Phase B — Core editing breadth (DONE)
 
-- [ ] Tracks: reorder, color, folder depth, solo/arm/phase/pan/width, freeze.
-- [ ] Media items: position/length/fades/gain, split, glue, move, loop, takes.
-- [ ] MIDI editing: read/edit/delete notes, CC events, velocity, quantize, swing.
-- [ ] Markers & regions: add/move/delete/enumerate, region render matrix.
-- [ ] Time/transport: tempo map, time signatures, loop points, grid/snap, goto.
+- [x] Tracks: move/reorder, color (RGB), folder depth, solo/arm/pan, get/set value.
+- [x] Media items: position/length, fades, split, delete, move to track.
+- [x] MIDI editing: read/edit/delete/add notes (QN positions). (CC events: TODO.)
+- [x] Markers & regions: add/delete/list, edit cursor. (Region render matrix: Phase D.)
+- [ ] Time/transport tempo map / time signatures / grid-snap — partial (tempo done);
+      remainder reachable now via `call_reascript`, curate as needed.
 
 ## Phase C — Mixing, FX & automation (priority; composite-heavy)
 

@@ -294,14 +294,24 @@ local TRACK_ARG_FNS = {
   CreateNewMIDIItemInProj = 1,
 }
 
+local function resolve_track_sel(sel)
+  -- Prefer the GUID-aware resolver from helpers; fall back to plain index.
+  if type(MCP.resolve_track) == "function" then
+    return MCP.resolve_track(sel)
+  end
+  if type(sel) == "number" then return reaper.GetTrack(0, sel) end
+  return nil
+end
+
 local function resolve_args(fn, args)
   local idx = TRACK_ARG_FNS[fn]
   if not idx then return args end
   local resolved = {}
   for i = 1, #args do resolved[i] = args[i] end
-  local tnum = resolved[idx]
-  if type(tnum) == "number" then
-    resolved[idx] = reaper.GetTrack(0, tnum) -- 0-based; nil if out of range
+  local sel = resolved[idx]
+  -- Accept an integer index OR a GUID string for the track argument.
+  if type(sel) == "number" or type(sel) == "string" then
+    resolved[idx] = resolve_track_sel(sel)
   end
   return resolved
 end

@@ -53,12 +53,26 @@ config snippet. Quick version:
 2. **Run the server:** `cd server && uv run reaper-mcp`
 3. **Point your MCP client at it** (see `server/README.md`).
 
-## Tools (initial slice)
+## Tools (40 and growing)
 
-`reaper_status`, `list_tracks`, `add_track`, `get_track_name`,
-`set_track_name`, `set_track_volume` (dB), `set_track_mute`, `transport_play`,
-`transport_stop`, `get_play_state`.
+- **Escape hatch:** `call_reascript(fn, args)` — invoke any of the ~780 ReaScript
+  functions directly (full API reachable).
+- **Status/transport:** `reaper_status`, `transport_play/stop`, `get_play_state`,
+  `set_tempo`, `set_time_selection`, `set_cursor`.
+- **Tracks:** `list_tracks`, `add_track`, `delete_track`, `delete_all_tracks`,
+  `get/set_track_name`, `set_track_volume` (dB), `set_track_mute`,
+  `set_track_pan/solo/arm/color`, `move_track`, `set_folder_depth`.
+- **Object model (Phase A):** `describe_project` (tree + GUIDs), `get_track_guid`.
+  Track args accept an index **or** a GUID (GUIDs survive reorder/insert/delete).
+- **Media items:** `set_item_bounds/fades`, `split_item`, `delete_item`,
+  `move_item_to_track`.
+- **MIDI:** `add_midi_clip`, `get_notes`, `add_notes`, `set_note`, `delete_note`.
+- **FX:** `add_fx`.
+- **Markers/regions:** `add_marker`, `delete_marker`, `list_markers`.
+- **Render:** `render_mp3`.
+- **Audio feedback:** `critique_render(path, ask?)` — Gemini "listens" and critiques.
 
-This is a deliberately thin vertical slice that proves the whole pipeline.
-Adding more tools is mostly Python-side work in `tools.py` / `server.py` — the
-Lua bridge dispatches any `reaper.<fn>` dynamically, so it rarely needs changes.
+Adding more tools is mostly Python-side work in `tools.py` / `server.py`. The Lua
+bridge dispatches any `reaper.<fn>` dynamically; pointer-chaining operations live
+as hot-reloadable composites in `bridge/mcp_helpers.lua` (reload via `MCP.reload`,
+no Reaper restart). See `docs/ROADMAP.md` for what's next.
