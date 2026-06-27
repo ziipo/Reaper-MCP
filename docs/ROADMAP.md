@@ -74,22 +74,29 @@ The enabler for everything else. Track references now survive insert/delete/reor
 - [ ] Time/transport tempo map / time signatures / grid-snap — partial (tempo done);
       remainder reachable now via `call_reascript`, curate as needed.
 
-## Phase C — Mixing, FX & automation (priority; composite-heavy)
+## Phase C — Mixing, FX & automation (DONE)
 
-- [ ] FX graph: enumerate, get/set params **by name**, presets, chains, bypass.
-- [ ] Instrument loading (VSTi), plugin discovery.
-- [ ] Automation envelopes: create/read/write points, automation modes.
-- [ ] Routing: full send/receive matrix, sidechain wiring (enables real
-      LoFi-style sidechain pumping).
+- [x] FX graph: `list_fx_params` (names/values/formatted), `set_fx_param` BY NAME
+      (substring match), `set_fx_enabled` (bypass), `delete_fx`, `set_fx_preset`.
+- [x] Automation envelopes: `write_envelope`/`read_envelope` for FX-param and
+      built-in track envelopes (Volume/Pan/Mute, auto-created via toggle action).
+- [x] Routing: `add_send`/`set_send_value`/`list_sends`/`remove_send`. (Sidechain
+      = a send + the receiving FX's input; reachable now, curate a helper later.)
+- [x] Verified the full render→critique→adjust→verify loop live (t005): applied
+      Gemini's EQ suggestions via set_fx_param, Gemini confirmed the improvement.
+- [ ] Instrument/plugin discovery enumeration — reachable via call_reascript; TODO.
 
-## Phase D — Render, project & I/O
+## Phase D — Render, project & I/O (DONE)
 
-- [ ] Render: format/bitrate control (build base64 `RENDER_FORMAT`), WAV/FLAC/
-      stems, region rendering, normalization, render queue.
-- [ ] Render **observability**: poll `RENDER_TARGETS`/file existence, detect
-      in-progress, surface errors (current render returns optimistically).
-- [ ] Project lifecycle: new/open/save/save-as, settings, `.rpp`, multi-tab.
-- [ ] Media import: insert audio files, record-arm workflows.
+- [x] Render with format control: `render(dir, file, len, fmt)` for mp3/wav/flac
+      (4-byte sink ids l3pm/evaw/calf — all verified on disk as t002/t003/t004).
+- [x] Render **observability**: returns `exists` (file confirmed on disk) +
+      `RENDER_TARGETS`; `file_exists` poll helper for long renders.
+- [x] Project lifecycle: `save_project`, `project_info`, `new_project`,
+      `open_project`. (save_project_as needs a dialog — TODO/deferred.)
+- [x] Media import: `insert_media`.
+- [ ] Stems / region rendering / bitrate via base64 RENDER_FORMAT — TODO (defaults
+      only for now); reachable via call_reascript + GetSetProjectInfo.
 
 ## Phase E — Robustness & safety (woven through B–D)
 

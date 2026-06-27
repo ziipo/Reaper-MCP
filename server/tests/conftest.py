@@ -261,6 +261,85 @@ class FakeReaper:
             self.cursor = args[0]
             return [self.cursor]
 
+        # -- Phase C: FX params --
+        if fn == "MCP.list_fx_params":
+            return [[{"index": 0, "name": "Gain-Band 2", "value": 0.0,
+                      "min": -24.0, "max": 24.0, "value_norm": 0.5,
+                      "formatted": "0.0"}]][0]
+        if fn == "MCP.set_fx_param_by_name":
+            idx = self._resolve_track_idx(args[0])
+            if idx is None:
+                raise RuntimeError("no track")
+            if "nomatch" in str(args[2]).lower():
+                raise RuntimeError("no param matching '%s'" % args[2])
+            return [4, args[2], "-1.5"]
+        if fn == "MCP.set_fx_enabled":
+            return [args[2]]
+        if fn == "MCP.delete_fx":
+            return [True]
+        if fn == "MCP.set_fx_preset":
+            return [True]
+
+        # -- Phase C: envelopes --
+        if fn == "MCP.write_envelope":
+            idx = self._resolve_track_idx(args[0])
+            if idx is None:
+                raise RuntimeError("no track")
+            self.tracks[idx].setdefault("_env", {})[str(args[1])] = list(args[2])
+            return [len(args[2])]
+        if fn == "MCP.read_envelope":
+            idx = self._resolve_track_idx(args[0])
+            pts = self.tracks[idx].get("_env", {}).get(str(args[1]), [])
+            return [{"index": i, "time": p[0], "value": p[1],
+                     "shape": p[2] if len(p) > 2 else 0}
+                    for i, p in enumerate(pts)]
+
+        # -- Phase C: sends --
+        if fn == "MCP.add_send":
+            si = self._resolve_track_idx(args[0])
+            di = self._resolve_track_idx(args[1])
+            if si is None or di is None:
+                raise RuntimeError("track not found")
+            self.tracks[si].setdefault("_sends", []).append(
+                {"dest": di, "vol": 1.0, "pan": 0.0})
+            return [len(self.tracks[si]["_sends"]) - 1]
+        if fn == "MCP.set_send_value":
+            si = self._resolve_track_idx(args[0])
+            s = self.tracks[si]["_sends"][args[1]]
+            if args[2] == "D_VOL":
+                s["vol"] = args[3]
+            elif args[2] == "D_PAN":
+                s["pan"] = args[3]
+            return [True]
+        if fn == "MCP.list_sends":
+            si = self._resolve_track_idx(args[0])
+            sends = self.tracks[si].get("_sends", [])
+            return [{"index": i, "name": self.tracks[s["dest"]]["name"],
+                     "volume": s["vol"], "pan": s["pan"]}
+                    for i, s in enumerate(sends)]
+        if fn == "MCP.remove_send":
+            si = self._resolve_track_idx(args[0])
+            self.tracks[si]["_sends"].pop(args[1])
+            return [True]
+
+        # -- Phase D: render/project --
+        if fn == "MCP.render":
+            d, fname = args[0], args[1]
+            path = os.path.join(d, fname)
+            return [path, True, path]
+        if fn == "MCP.file_exists":
+            return [os.path.exists(args[0])]
+        if fn == "MCP.save_project":
+            return ["proj", "/tmp/proj"]
+        if fn == "MCP.project_info":
+            return [{"name": "proj", "path": "/tmp", "change_count": 1}]
+        if fn == "MCP.new_project":
+            return [True]
+        if fn == "MCP.open_project":
+            return ["opened"]
+        if fn == "MCP.insert_media":
+            return [1]
+
         # unknown
         raise RuntimeError("unknown function: %s" % fn)
 

@@ -411,3 +411,143 @@ def set_cursor(bridge: ReaperBridge, position: float, move_view: bool = False) -
     """Move the edit cursor to a project-time position (seconds)."""
     pos = _first(bridge.call("MCP.set_cursor", position, move_view), position)
     return {"cursor": pos}
+
+
+# -- Phase C: FX parameter control -------------------------------------------
+
+
+def list_fx_params(bridge: ReaperBridge, track, fx_index: int) -> list[dict]:
+    """List an FX's parameters with names, current/normalized values, and formatted text."""
+    return bridge.call("MCP.list_fx_params", track, fx_index)
+
+
+def set_fx_param(bridge: ReaperBridge, track, fx_index: int,
+                 param_name: str, value_norm: float) -> dict:
+    """Set an FX parameter by (substring) name to a normalized 0..1 value.
+
+    Returns the resolved param index, full name, and formatted value (e.g. "-1.5 dB").
+    """
+    res = bridge.call("MCP.set_fx_param_by_name", track, fx_index, param_name, value_norm)
+    return {
+        "param_index": res[0] if res else None,
+        "param_name": res[1] if len(res) > 1 else None,
+        "value": res[2] if len(res) > 2 else None,
+    }
+
+
+def set_fx_enabled(bridge: ReaperBridge, track, fx_index: int, enabled: bool) -> dict:
+    """Enable or bypass an FX."""
+    state = _first(bridge.call("MCP.set_fx_enabled", track, fx_index, enabled), enabled)
+    return {"fx_index": fx_index, "enabled": bool(state)}
+
+
+def delete_fx(bridge: ReaperBridge, track, fx_index: int) -> dict:
+    """Remove an FX from a track."""
+    ok = _first(bridge.call("MCP.delete_fx", track, fx_index), False)
+    return {"deleted": bool(ok), "fx_index": fx_index}
+
+
+def set_fx_preset(bridge: ReaperBridge, track, fx_index: int, preset_name: str) -> dict:
+    """Apply a named preset to an FX."""
+    ok = _first(bridge.call("MCP.set_fx_preset", track, fx_index, preset_name), False)
+    return {"applied": bool(ok), "preset": preset_name}
+
+
+# -- Phase C: automation envelopes -------------------------------------------
+# env_spec selects the envelope: ["fx", fx_index, param_name] for an FX param,
+# or ["track", "Volume"|"Pan"|"Mute"] for a built-in track envelope.
+
+
+def write_envelope(bridge: ReaperBridge, track, env_spec: list, points: list[dict]) -> dict:
+    """Write automation points to an envelope, overwriting the spanned time range.
+
+    Each point: {"time": seconds, "value": envelope-native, "shape"?: 0=linear}.
+    For Volume, value is linear amplitude (1.0 = unity). For FX params, 0..1.
+    """
+    arrays = [[p["time"], p["value"], int(p.get("shape", 0))] for p in points]
+    count = _first(bridge.call("MCP.write_envelope", track, env_spec, arrays), 0)
+    return {"points_written": count}
+
+
+def read_envelope(bridge: ReaperBridge, track, env_spec: list) -> list[dict]:
+    """Read all points of an envelope."""
+    return bridge.call("MCP.read_envelope", track, env_spec)
+
+
+# -- Phase C: sends / routing ------------------------------------------------
+
+
+def add_send(bridge: ReaperBridge, src_track, dest_track) -> dict:
+    """Create a send from src_track to dest_track. Returns the send index."""
+    idx = _first(bridge.call("MCP.add_send", src_track, dest_track), None)
+    return {"send_index": idx}
+
+
+def set_send_value(bridge: ReaperBridge, src_track, send_index: int,
+                   parmname: str, value: float) -> dict:
+    """Set a send parameter (e.g. D_VOL amplitude, D_PAN -1..1, B_MUTE)."""
+    ok = _first(bridge.call("MCP.set_send_value", src_track, send_index, parmname, value), False)
+    return {"ok": bool(ok), "send_index": send_index, "parm": parmname, "value": value}
+
+
+def list_sends(bridge: ReaperBridge, src_track) -> list[dict]:
+    """List a track's sends with destination name, volume, and pan."""
+    return bridge.call("MCP.list_sends", src_track)
+
+
+def remove_send(bridge: ReaperBridge, src_track, send_index: int) -> dict:
+    """Remove a send by index."""
+    ok = _first(bridge.call("MCP.remove_send", src_track, send_index), False)
+    return {"removed": bool(ok), "send_index": send_index}
+
+
+# -- Phase D: render (format + observability) & project I/O -------------------
+
+
+def render(bridge: ReaperBridge, directory: str, filename: str, length_sec: float,
+           fmt: str = "mp3", srate: int = 44100, channels: int = 2) -> dict:
+    """Render the project (0..length_sec) to `fmt` (mp3/wav/flac). Verifies output.
+
+    Returns the path and `exists` (whether the file was confirmed on disk) plus
+    the render targets Reaper reported. `directory` must be absolute.
+    """
+    res = bridge.call("MCP.render", directory, filename, length_sec, fmt, srate, channels)
+    return {
+        "path": res[0] if res else None,
+        "exists": bool(res[1]) if len(res) > 1 else None,
+        "targets": res[2] if len(res) > 2 else None,
+    }
+
+
+def file_exists(bridge: ReaperBridge, path: str) -> dict:
+    """Check whether a file exists on disk (poll helper for long renders)."""
+    return {"exists": bool(_first(bridge.call("MCP.file_exists", path), False))}
+
+
+def save_project(bridge: ReaperBridge, force_save_as: bool = False) -> dict:
+    """Save the current project in place. Returns its name and path."""
+    res = bridge.call("MCP.save_project", force_save_as)
+    return {"name": res[0] if res else None, "path": res[1] if len(res) > 1 else None}
+
+
+def project_info(bridge: ReaperBridge) -> dict:
+    """Get the current project's name, path, and state-change count."""
+    return _first(bridge.call("MCP.project_info"), {})
+
+
+def new_project(bridge: ReaperBridge) -> dict:
+    """Open a new, empty project in a new tab."""
+    bridge.call("MCP.new_project")
+    return {"new_project": True}
+
+
+def open_project(bridge: ReaperBridge, path: str) -> dict:
+    """Open a project file (.rpp)."""
+    name = _first(bridge.call("MCP.open_project", path), "")
+    return {"opened": name}
+
+
+def insert_media(bridge: ReaperBridge, file_path: str, mode: int = 0) -> dict:
+    """Insert a media file onto the selected track at the edit cursor."""
+    res = _first(bridge.call("MCP.insert_media", file_path, mode), None)
+    return {"inserted": file_path, "result": res}

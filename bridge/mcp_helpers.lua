@@ -455,4 +455,308 @@ function M.set_cursor(args)
   return { reaper.GetCursorPosition() }
 end
 
+------------------------------------------------------------------------
+-- Phase C: FX parameter control
+------------------------------------------------------------------------
+
+-- Find a parameter index by (case-insensitive substring) name. Returns -1 if
+-- not found. Used so callers address params by name, not opaque index.
+local function find_param(tr, fx, name)
+  local lname = name:lower()
+  local n = reaper.TrackFX_GetNumParams(tr, fx)
+  for p = 0, n - 1 do
+    local ok, pname = reaper.TrackFX_GetParamName(tr, fx, p, "")
+    if ok and pname:lower():find(lname, 1, true) then
+      return p, pname
+    end
+  end
+  return -1, nil
+end
+
+-- List a track's FX with their parameters (names + current values).
+-- args: { track_sel, fx_index }  -> { { index, name, value_norm, value, formatted } ... }
+function M.list_fx_params(args)
+  local tr = M.resolve_track(args[1])
+  if not tr then error("no track for selector " .. tostring(args[1])) end
+  local fx = args[2]
+  local n = reaper.TrackFX_GetNumParams(tr, fx)
+  local params = {}
+  for p = 0, n - 1 do
+    local _, pname = reaper.TrackFX_GetParamName(tr, fx, p, "")
+    local _, fmt = reaper.TrackFX_GetFormattedParamValue(tr, fx, p, "")
+    local val, minv, maxv = reaper.TrackFX_GetParam(tr, fx, p)
+    params[#params + 1] = {
+      index = p, name = pname,
+      value = val, min = minv, max = maxv,
+      value_norm = reaper.TrackFX_GetParamNormalized(tr, fx, p),
+      formatted = fmt,
+    }
+  end
+  return params
+end
+
+-- Set an FX parameter by name (normalized 0..1).
+-- args: { track_sel, fx_index, param_name, value_norm }
+function M.set_fx_param_by_name(args)
+  local tr = M.resolve_track(args[1])
+  if not tr then error("no track for selector " .. tostring(args[1])) end
+  local pidx, pname = find_param(tr, args[2], args[3])
+  if pidx < 0 then error("no param matching '" .. tostring(args[3]) .. "'") end
+  reaper.TrackFX_SetParamNormalized(tr, args[2], pidx, args[4])
+  local _, fmt = reaper.TrackFX_GetFormattedParamValue(tr, args[2], pidx, "")
+  return { pidx, pname, fmt }
+end
+
+-- Enable/bypass an FX. args: { track_sel, fx_index, enabled }
+function M.set_fx_enabled(args)
+  local tr = M.resolve_track(args[1])
+  if not tr then error("no track for selector " .. tostring(args[1])) end
+  reaper.TrackFX_SetEnabled(tr, args[2], args[3])
+  return { reaper.TrackFX_GetEnabled(tr, args[2]) }
+end
+
+-- Delete an FX. args: { track_sel, fx_index }
+function M.delete_fx(args)
+  local tr = M.resolve_track(args[1])
+  if not tr then error("no track for selector " .. tostring(args[1])) end
+  return { reaper.TrackFX_Delete(tr, args[2]) }
+end
+
+-- Apply a named preset. args: { track_sel, fx_index, preset_name }
+function M.set_fx_preset(args)
+  local tr = M.resolve_track(args[1])
+  if not tr then error("no track for selector " .. tostring(args[1])) end
+  return { reaper.TrackFX_SetPreset(tr, args[2], args[3]) }
+end
+
+------------------------------------------------------------------------
+-- Phase C: automation envelopes
+--
+-- Envelopes are addressed as the FX-param envelope on a track (the most common
+-- case) or a named track envelope ("Volume", "Pan", "Mute"). The TrackEnvelope
+-- pointer never crosses the bridge; we resolve + write points in one call.
+-- Point times are in PROJECT SECONDS; values are envelope-native (e.g. 0..1
+-- normalized for FX params; for Volume the value is the linear amplitude).
+------------------------------------------------------------------------
+
+-- Built-in track envelopes don't auto-create via GetTrackEnvelopeByName. Map the
+-- common ones to the action that makes them visible (which creates them), then
+-- fetch by name. FX-param envelopes DO auto-create via GetFXEnvelope.
+local BUILTIN_ENV_ACTION = {
+  Volume = 40406,  -- Track: Toggle track volume envelope visible
+  Pan = 40407,     -- Track: Toggle track pan envelope visible
+  Mute = 40867,    -- Track: Toggle track mute envelope visible
+}
+
+local function resolve_env(track_sel, spec)
+  local tr = M.resolve_track(track_sel)
+  if not tr then error("no track for selector " .. tostring(track_sel)) end
+  -- spec = { "fx", fx_index, param_name } | { "track", name }
+  if spec[1] == "fx" then
+    local fx = spec[2]
+    local pname = spec[3]
+    local pidx = find_param(tr, fx, pname)
+    if pidx < 0 then error("no param matching '" .. tostring(pname) .. "'") end
+    return reaper.GetFXEnvelope(tr, fx, pidx, true) -- create if missing
+  else
+    local name = spec[2]
+    local env = reaper.GetTrackEnvelopeByName(tr, name)
+    if not env and BUILTIN_ENV_ACTION[name] then
+      -- Create it by toggling visibility on this track.
+      reaper.SetOnlyTrackSelected(tr)
+      reaper.Main_OnCommand(BUILTIN_ENV_ACTION[name], 0)
+      env = reaper.GetTrackEnvelopeByName(tr, name)
+    end
+    return env
+  end
+end
+
+-- Write a set of automation points to an envelope (replacing the time range
+-- they span). args: { track_sel, env_spec, points }
+--   env_spec: { "fx", fx_index, param_name } or { "track", "Volume" }
+--   points: array of { time_sec, value, shape? } (shape default 0 = linear)
+function M.write_envelope(args)
+  local env = resolve_env(args[1], args[2])
+  if not env then error("envelope not found/creatable") end
+  local pts = args[3] or {}
+  if #pts == 0 then return { 0 } end
+  -- clear the spanned range first for a clean overwrite
+  local tmin, tmax = pts[1][1], pts[1][1]
+  for _, p in ipairs(pts) do
+    if p[1] < tmin then tmin = p[1] end
+    if p[1] > tmax then tmax = p[1] end
+  end
+  reaper.DeleteEnvelopePointRange(env, tmin - 1e-9, tmax + 1e-9)
+  for _, p in ipairs(pts) do
+    reaper.InsertEnvelopePoint(env, p[1], p[2], p[3] or 0, 0, false, true)
+  end
+  reaper.Envelope_SortPoints(env)
+  return { #pts }
+end
+
+-- Read all points of an envelope. args: { track_sel, env_spec }
+function M.read_envelope(args)
+  local env = resolve_env(args[1], args[2])
+  if not env then error("envelope not found") end
+  local n = reaper.CountEnvelopePoints(env)
+  local pts = {}
+  for i = 0, n - 1 do
+    local ok, t, v, shape = reaper.GetEnvelopePoint(env, i)
+    if ok then pts[#pts + 1] = { index = i, time = t, value = v, shape = shape } end
+  end
+  return pts
+end
+
+------------------------------------------------------------------------
+-- Phase C: sends / routing
+-- category: 0=track send, -1=receive, 1=hardware output.
+------------------------------------------------------------------------
+
+-- Create a send from src track to dest track. args: { src_sel, dest_sel }
+-- Returns { send_index }.
+function M.add_send(args)
+  local src = M.resolve_track(args[1])
+  local dest = M.resolve_track(args[2])
+  if not src or not dest then error("source or dest track not found") end
+  return { reaper.CreateTrackSend(src, dest) }
+end
+
+-- Set a send parameter. args: { src_sel, send_index, parmname, value }
+-- common parms: D_VOL (amp), D_PAN (-1..1), B_MUTE, I_SRCCHAN, I_DSTCHAN.
+function M.set_send_value(args)
+  local src = M.resolve_track(args[1])
+  if not src then error("source track not found") end
+  return { reaper.SetTrackSendInfo_Value(src, 0, args[2], args[3], args[4]) }
+end
+
+-- List sends on a track. args: { src_sel } -> { { index, name, volume, pan } ... }
+function M.list_sends(args)
+  local src = M.resolve_track(args[1])
+  if not src then error("source track not found") end
+  local n = reaper.GetTrackNumSends(src, 0)
+  local sends = {}
+  for i = 0, n - 1 do
+    local _, name = reaper.GetTrackSendName(src, i)
+    sends[#sends + 1] = {
+      index = i, name = name,
+      volume = reaper.GetTrackSendInfo_Value(src, 0, i, "D_VOL"),
+      pan = reaper.GetTrackSendInfo_Value(src, 0, i, "D_PAN"),
+    }
+  end
+  return sends
+end
+
+-- Remove a send. args: { src_sel, send_index }
+function M.remove_send(args)
+  local src = M.resolve_track(args[1])
+  if not src then error("source track not found") end
+  return { reaper.RemoveTrackSend(src, 0, args[2]) }
+end
+
+------------------------------------------------------------------------
+-- Phase D: render (format control + observability) and project I/O
+------------------------------------------------------------------------
+
+-- 4-byte sink ids for "default settings" of each format.
+local FORMAT_SINK = {
+  mp3 = "l3pm",   -- MP3 (LAME)
+  wav = "evaw",   -- WAV
+  flac = "calf",  -- FLAC
+}
+
+-- Render the project to a file with a chosen format, then verify the output
+-- exists (render is otherwise fire-and-forget). args:
+--   { directory, filename, end_sec, format, srate?, channels? }
+-- Returns { full_path, exists, targets } so callers don't have to guess success.
+function M.render(args)
+  local dir, fname, end_sec = args[1], args[2], args[3]
+  local format = (args[4] or "mp3"):lower()
+  local sink = FORMAT_SINK[format]
+  if not sink then error("unsupported format: " .. tostring(format)) end
+  local srate = args[5] or 44100
+  local channels = args[6] or 2
+
+  reaper.RecursiveCreateDirectory(dir, 0)
+  reaper.GetSetProjectInfo_String(0, "RENDER_FILE", dir, true)
+  reaper.GetSetProjectInfo_String(0, "RENDER_PATTERN", fname, true)
+  reaper.GetSetProjectInfo_String(0, "RENDER_FORMAT", sink, true)
+  reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 0, true)   -- master mix
+  reaper.GetSetProjectInfo(0, "RENDER_BOUNDSFLAG", 0, true) -- custom bounds
+  reaper.GetSetProjectInfo(0, "RENDER_STARTPOS", 0.0, true)
+  reaper.GetSetProjectInfo(0, "RENDER_ENDPOS", end_sec, true)
+  reaper.GetSetProjectInfo(0, "RENDER_SRATE", srate, true)
+  reaper.GetSetProjectInfo(0, "RENDER_CHANNELS", channels, true)
+  reaper.GetSetProjectInfo(0, "RENDER_ADDTOPROJ", 0, true)
+
+  -- What files WILL be written (observability before/after).
+  local _, targets = reaper.GetSetProjectInfo_String(0, "RENDER_TARGETS", "", false)
+
+  -- 42230 = File: Render project to disk, using the most recent render settings.
+  reaper.Main_OnCommand(42230, 0)
+
+  local sep = package.config:sub(1, 1)
+  local full = dir .. sep .. fname
+  -- Verify the file now exists on disk (render is synchronous for our short
+  -- jobs; for long renders a caller can poll file existence separately).
+  local f = io.open(full, "rb")
+  local exists = f ~= nil
+  if f then f:close() end
+  return { full, exists, targets }
+end
+
+-- Check whether a path exists on disk (poll helper for long renders).
+-- args: { path }
+function M.file_exists(args)
+  local f = io.open(args[1], "rb")
+  if f then f:close(); return { true } end
+  return { false }
+end
+
+-- Save the current project. args: { force_save_as? } (false = save in place)
+function M.save_project(args)
+  reaper.Main_SaveProject(0, args[1] or false)
+  local name = reaper.GetProjectName(0, "")
+  local path = reaper.GetProjectPath("")
+  return { name, path }
+end
+
+-- Save project to a specific .rpp path. args: { full_path }
+function M.save_project_as(args)
+  -- GetSetProjectInfo_String can't save-as; use the action after setting via API
+  -- is unreliable, so we save in place after the user/host has a path. For a
+  -- fresh path, write the project file location via the save-as action is not
+  -- scriptable without a dialog. Instead, we report current name/path; explicit
+  -- path-based save is done by save_project once the project has a file.
+  -- Simplest reliable path: Main_SaveProject with forceSaveAs shows a dialog.
+  error("save_project_as requires a path dialog; use save_project (in place) " ..
+        "or open/create the .rpp via the host. Path-based save is a TODO.")
+end
+
+-- Get project name + path + change count. args: {}
+function M.project_info(args)
+  return { {
+    name = reaper.GetProjectName(0, ""),
+    path = reaper.GetProjectPath(""),
+    change_count = reaper.GetProjectStateChangeCount(0),
+  } }
+end
+
+-- Create a new empty project in a new tab. args: {}
+function M.new_project(args)
+  reaper.Main_OnCommand(40859, 0) -- New project tab
+  return { true }
+end
+
+-- Open a project file. args: { full_path }
+function M.open_project(args)
+  reaper.Main_openProject(args[1])
+  return { reaper.GetProjectName(0, "") }
+end
+
+-- Insert a media file onto the currently selected track at the edit cursor.
+-- args: { file_path, mode? }  mode 0 = add to current track (default).
+function M.insert_media(args)
+  return { reaper.InsertMedia(args[1], args[2] or 0) }
+end
+
 return M

@@ -304,6 +304,130 @@ def set_cursor(position: float, move_view: bool = False) -> dict:
     return _guard(tools.set_cursor, position, move_view)
 
 
+# -- Phase C: FX, automation, routing ----------------------------------------
+
+
+@mcp.tool()
+def list_fx_params(track: object, fx_index: int) -> list[dict]:
+    """List an FX's parameters (names, values, formatted text). Use to find param names."""
+    return _guard(tools.list_fx_params, track, fx_index)
+
+
+@mcp.tool()
+def set_fx_param(track: object, fx_index: int, param_name: str, value_norm: float) -> dict:
+    """Set an FX parameter by name to a normalized 0..1 value."""
+    return _guard(tools.set_fx_param, track, fx_index, param_name, value_norm)
+
+
+@mcp.tool()
+def set_fx_enabled(track: object, fx_index: int, enabled: bool) -> dict:
+    """Enable or bypass an FX."""
+    return _guard(tools.set_fx_enabled, track, fx_index, enabled)
+
+
+@mcp.tool()
+def delete_fx(track: object, fx_index: int) -> dict:
+    """Remove an FX from a track."""
+    return _guard(tools.delete_fx, track, fx_index)
+
+
+@mcp.tool()
+def set_fx_preset(track: object, fx_index: int, preset_name: str) -> dict:
+    """Apply a named preset to an FX."""
+    return _guard(tools.set_fx_preset, track, fx_index, preset_name)
+
+
+@mcp.tool()
+def write_envelope(track: object, env_spec: list, points: list[dict]) -> dict:
+    """Write automation points to an envelope, overwriting the spanned range.
+
+    env_spec: ["fx", fx_index, param_name] or ["track", "Volume"|"Pan"|"Mute"].
+    Each point: {"time": seconds, "value": native, "shape"?: 0}. Volume value is
+    linear amplitude (1.0 = unity); FX-param values are 0..1.
+    """
+    return _guard(tools.write_envelope, track, env_spec, points)
+
+
+@mcp.tool()
+def read_envelope(track: object, env_spec: list) -> list[dict]:
+    """Read all points of an envelope (see write_envelope for env_spec)."""
+    return _guard(tools.read_envelope, track, env_spec)
+
+
+@mcp.tool()
+def add_send(src_track: object, dest_track: object) -> dict:
+    """Create a send from one track to another."""
+    return _guard(tools.add_send, src_track, dest_track)
+
+
+@mcp.tool()
+def set_send_value(src_track: object, send_index: int, parmname: str, value: float) -> dict:
+    """Set a send parameter (D_VOL amplitude, D_PAN -1..1, B_MUTE, I_SRCCHAN, I_DSTCHAN)."""
+    return _guard(tools.set_send_value, src_track, send_index, parmname, value)
+
+
+@mcp.tool()
+def list_sends(src_track: object) -> list[dict]:
+    """List a track's sends (destination name, volume, pan)."""
+    return _guard(tools.list_sends, src_track)
+
+
+@mcp.tool()
+def remove_send(src_track: object, send_index: int) -> dict:
+    """Remove a send by index."""
+    return _guard(tools.remove_send, src_track, send_index)
+
+
+# -- Phase D: render, project & I/O ------------------------------------------
+
+
+@mcp.tool()
+def render(directory: str, filename: str, length_sec: float,
+           fmt: str = "mp3", srate: int = 44100, channels: int = 2) -> dict:
+    """Render the project (0..length_sec) to mp3/wav/flac, verifying the output.
+
+    Returns {path, exists, targets}. Prefer this over render_mp3 (kept for
+    compatibility). `directory` must be absolute; `filename` should match `fmt`.
+    """
+    return _guard(tools.render, directory, filename, length_sec, fmt, srate, channels)
+
+
+@mcp.tool()
+def file_exists(path: str) -> dict:
+    """Check whether a file exists on disk (useful to poll a long render)."""
+    return _guard(tools.file_exists, path)
+
+
+@mcp.tool()
+def save_project(force_save_as: bool = False) -> dict:
+    """Save the current project in place. Returns its name and path."""
+    return _guard(tools.save_project, force_save_as)
+
+
+@mcp.tool()
+def project_info() -> dict:
+    """Get the current project's name, path, and state-change count."""
+    return _guard(tools.project_info)
+
+
+@mcp.tool()
+def new_project() -> dict:
+    """Open a new, empty project in a new tab."""
+    return _guard(tools.new_project)
+
+
+@mcp.tool()
+def open_project(path: str) -> dict:
+    """Open a project file (.rpp)."""
+    return _guard(tools.open_project, path)
+
+
+@mcp.tool()
+def insert_media(file_path: str, mode: int = 0) -> dict:
+    """Insert a media file onto the selected track at the edit cursor."""
+    return _guard(tools.insert_media, file_path, mode)
+
+
 @mcp.tool()
 def critique_render(path: str, ask: str | None = None) -> dict:
     """Send a rendered audio file to Gemini to "listen" and critique it.

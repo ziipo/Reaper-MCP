@@ -91,6 +91,18 @@ within each section.
 
 *(Filled in as we actually make music with the tool.)*
 
+- **The render→critique→adjust→verify loop genuinely works (2026-06-27).** Closed
+  it fully: Gemini critiqued t001 (150–250 Hz mud, lacked high air) → applied the
+  exact fixes with `set_fx_param` on ReaEQ (cut Gain-Band 2 to -1.9 dB, moved
+  Band 3 to 6.4 kHz at +4.1 dB) → re-rendered (t005) → Gemini confirmed the mud
+  cleared and high-end air improved "while preserving the warm lofi character."
+  Takeaway: trust Gemini's frequency-specific suggestions; they map cleanly onto
+  ReaEQ band moves. `list_fx_params` first to find the band names/indices.
+
+- **ReaEQ band naming is predictable.** Params come as "Freq-/Gain-/BW-" per band
+  ("Low Shelf", "Band 2", "Band 3", ...). `set_fx_param` matches by substring, so
+  "Gain-Band 2" etc. work directly. Gain norm 0.5 = 0 dB; Freq is logarithmic.
+
 - **Pitched ReaSynth hits make weak "drums."** In the first LoFi test (t001) we
   emulated a kit with single-pitch ReaSynth notes (kick=36, snare=38, hat=78).
   Gemini correctly heard them as synthy/beepy with soft transients. For

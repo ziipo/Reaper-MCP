@@ -67,9 +67,15 @@ config snippet. Quick version:
 - **Media items:** `set_item_bounds/fades`, `split_item`, `delete_item`,
   `move_item_to_track`.
 - **MIDI:** `add_midi_clip`, `get_notes`, `add_notes`, `set_note`, `delete_note`.
-- **FX:** `add_fx`.
+- **FX & automation:** `add_fx`, `list_fx_params`, `set_fx_param` (by name),
+  `set_fx_enabled`, `delete_fx`, `set_fx_preset`, `write_envelope`,
+  `read_envelope`.
+- **Routing:** `add_send`, `set_send_value`, `list_sends`, `remove_send`.
 - **Markers/regions:** `add_marker`, `delete_marker`, `list_markers`.
-- **Render:** `render_mp3`.
+- **Render:** `render` (mp3/wav/flac + output verification), `render_mp3`
+  (legacy), `file_exists`.
+- **Project I/O:** `save_project`, `project_info`, `new_project`, `open_project`,
+  `insert_media`.
 - **Audio feedback:** `critique_render(path, ask?)` — Gemini "listens" and critiques.
 
 Adding more tools is mostly Python-side work in `tools.py` / `server.py`. The Lua
