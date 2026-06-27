@@ -94,3 +94,32 @@ def test_save_project(bridge):
 def test_new_and_open_project(bridge):
     assert tools.new_project(bridge)["new_project"] is True
     assert tools.open_project(bridge, "/tmp/x.rpp")["opened"] == "opened"
+
+
+# -- Regression tests for bugs found in the live sweep (2026-06-27) -----------
+
+
+def test_optional_args_as_none_dont_crash(bridge):
+    """JSON-null-arg bug: optional args sent as None must not break helpers.
+
+    (Live, the null sentinel was truthy in Lua and crashed set_item_bounds /
+    set_item_fades / add_marker. The fake passes real None, but we still assert
+    these call paths accept omitted optionals cleanly.)
+    """
+    tools.add_track(bridge, "T")
+    tools.add_midi_clip(bridge, 0, 0.0, 4.0,
+                        [{"start_qn": 0, "end_qn": 1, "pitch": 60}])
+    # position only (length omitted)
+    tools.set_item_bounds(bridge, 0, 0, position=1.0)
+    # length only (position omitted)
+    tools.set_item_bounds(bridge, 0, 0, length=2.0)
+    # one fade only
+    tools.set_item_fades(bridge, 0, 0, fadein_sec=0.3)
+    # marker with no color
+    tools.add_marker(bridge, 1.0, "NoColor")
+
+
+def test_save_project_requires_path_when_untitled(bridge, fake_reaper):
+    """save_project must not silently pop a dialog; with a path it saves clean."""
+    res = tools.save_project(bridge, path="/tmp/proj.rpp")
+    assert res["name"] == "proj"

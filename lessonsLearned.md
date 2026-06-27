@@ -42,6 +42,36 @@ within each section.
   renders, but large renders won't be. Render observability is a TODO (Phase D/E):
   poll `RENDER_TARGETS` / file existence before trusting completion.
 
+- **Modal dialogs FREEZE the entire bridge** (2026-06-27). Any call that can pop a
+  blocking dialog stalls Reaper's GUI thread → the defer loop stops → heartbeat
+  goes stale → every subsequent call times out until a human dismisses the dialog.
+  Hit live with:
+  - `open_project` → "Save changes to current project?" prompt (froze the bridge).
+  - `save_project` on an UNTITLED project → save-as dialog (now guarded: we require
+    an explicit path and use `Main_SaveProjectEx`, which is dialog-free).
+  Guidance: prefer dialog-free APIs (`Main_SaveProjectEx`). For `open_project`,
+  save/clear the current project first, or open in a NEW tab (action 40859 then
+  load) so there's nothing to prompt about. Treat any project-lifecycle op as
+  potentially-blocking. A future hardening (Phase E): a watchdog that detects a
+  stale heartbeat mid-call and surfaces "Reaper may be showing a dialog."
+
+### Testing & verification
+
+- **The fake-Lua responder does NOT catch real-API bugs.** Green pytest only
+  proves the Python wrapper logic + arg plumbing; the fake is hand-written to
+  match my *assumptions*. Two real bugs slipped past green tests and only showed
+  up in a live sweep: the volume-envelope auto-create, and the JSON-null-arg bug
+  below. **Always do a live sweep on a scratch tab before claiming a tool works.**
+
+- **JSON `null` (from a Python `None` optional arg) was a truthy sentinel in Lua**
+  (2026-06-27). Optional args sent as `None` arrived as a non-nil sentinel table,
+  so `if args[n]` / `args[n] ~= nil` checks in helpers were wrong → e.g.
+  `set_item_bounds(position=1.0)` (length omitted) crashed, and `add_marker`
+  without `rgb` crashed in `ColorToNative`. Fixed systemically in the MAIN bridge
+  via `normalize_args` (converts null sentinels to real Lua nil, tracks length in
+  `.n`). Lesson: the fake passes real Python `None`, so it never reproduced this —
+  only live did.
+
 ### API quirks discovered
 
 - **`move_track` (ReorderSelectedTracks) is off-by-one moving downward.** The

@@ -306,8 +306,9 @@ end
 local function resolve_args(fn, args)
   local idx = TRACK_ARG_FNS[fn]
   if not idx then return args end
-  local resolved = {}
-  for i = 1, #args do resolved[i] = args[i] end
+  local n = args.n or #args
+  local resolved = { n = n }
+  for i = 1, n do resolved[i] = args[i] end
   local sel = resolved[idx]
   -- Accept an integer index OR a GUID string for the track argument.
   if type(sel) == "number" or type(sel) == "string" then
@@ -317,12 +318,30 @@ local function resolve_args(fn, args)
 end
 
 -- Execute a single {fn=..., args=...} call. Returns ok, results_table_or_errmsg.
+-- Convert any JSON-null sentinels in an args array to real Lua nil. Python sends
+-- optional/omitted args as null; without this they arrive as a truthy sentinel
+-- table and break `if args[n]` / `args[n] ~= nil` checks in helpers. We track the
+-- original length in `.n` so trailing nils don't get lost to the `#` operator.
+local function normalize_args(args)
+  local n = 0
+  for k in pairs(args) do
+    if type(k) == "number" and k > n then n = k end
+  end
+  local out = { n = n }
+  for i = 1, n do
+    local v = args[i]
+    if v ~= json.null then out[i] = v end -- leave nil for null/missing
+  end
+  return out
+end
+
 local function dispatch(call)
   local fn = call.fn
   if type(fn) ~= "string" then return false, "missing 'fn'" end
 
   local args = call.args or {}
   if type(args) ~= "table" then return false, "'args' must be an array" end
+  args = normalize_args(args)
 
   -- Composite helpers (MCP.*) run pointer-chaining internally and return
   -- JSON-safe values. Checked before raw reaper.* lookup. BUILTIN commands
@@ -341,7 +360,7 @@ local function dispatch(call)
   args = resolve_args(fn, args)
 
   -- table.pack captures all return values (incl. multi-return + trailing nils).
-  local packed = table.pack(pcall(f, table.unpack(args, 1, math.max(#args, 0))))
+  local packed = table.pack(pcall(f, table.unpack(args, 1, args.n or #args)))
   local ok = packed[1]
   if not ok then
     return false, tostring(packed[2])

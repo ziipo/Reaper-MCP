@@ -420,8 +420,10 @@ function M.add_marker(args)
   local is_rgn = args[3] or false
   local rgn_end = args[4] or pos
   local color = 0
-  if args[5] then
-    local c = args[5]
+  -- args[5] may be a real {r,g,b} array, or the JSON-null sentinel (a truthy
+  -- empty table). Only treat it as a color if it actually has numeric channels.
+  local c = args[5]
+  if type(c) == "table" and type(c[1]) == "number" then
     color = reaper.ColorToNative(c[1], c[2], c[3]) | 0x1000000
   end
   local idx = reaper.AddProjectMarker2(0, is_rgn, pos, rgn_end, name, -1, color)
@@ -712,24 +714,51 @@ function M.file_exists(args)
   return { false }
 end
 
--- Save the current project. args: { force_save_as? } (false = save in place)
+-- Save the current project. args: { path? }
+-- If `path` (a full .rpp path) is given, saves there WITHOUT a dialog via
+-- Main_SaveProjectEx. If omitted and the project already has a file, saves in
+-- place. If omitted and the project is untitled, we DO NOT call the API (that
+-- would pop a blocking save-as dialog and hang the bridge) — we error instead so
+-- the caller supplies a path.
 function M.save_project(args)
-  reaper.Main_SaveProject(0, args[1] or false)
-  local name = reaper.GetProjectName(0, "")
-  local path = reaper.GetProjectPath("")
-  return { name, path }
+  local path = args[1]
+  if path and #path > 0 then
+    reaper.Main_SaveProjectEx(0, path, 0)
+  else
+    local cur = reaper.GetProjectName(0, "")
+    if cur == "" then
+      error("project is untitled; pass an explicit .rpp path to save (an " ..
+            "in-place save would open a blocking dialog)")
+    end
+    reaper.Main_SaveProjectEx(0, "", 0) -- save in place, no dialog
+  end
+  return { reaper.GetProjectName(0, ""), reaper.GetProjectPath("") }
 end
 
--- Save project to a specific .rpp path. args: { full_path }
-function M.save_project_as(args)
-  -- GetSetProjectInfo_String can't save-as; use the action after setting via API
-  -- is unreliable, so we save in place after the user/host has a path. For a
-  -- fresh path, write the project file location via the save-as action is not
-  -- scriptable without a dialog. Instead, we report current name/path; explicit
-  -- path-based save is done by save_project once the project has a file.
-  -- Simplest reliable path: Main_SaveProject with forceSaveAs shows a dialog.
-  error("save_project_as requires a path dialog; use save_project (in place) " ..
-        "or open/create the .rpp via the host. Path-based save is a TODO.")
+-- List all open project tabs (so callers can navigate without poking opaque
+-- pointers across the bridge). Returns array of { tab, name, track_count }.
+function M.list_tabs(args)
+  local out = {}
+  local i = 0
+  while true do
+    local proj = reaper.EnumProjects(i)
+    if not proj then break end
+    out[#out + 1] = {
+      tab = i,
+      name = reaper.GetProjectName(proj, ""),
+      track_count = reaper.CountTracks(proj),
+    }
+    i = i + 1
+  end
+  return out
+end
+
+-- Switch the active project tab by index. args: { tab_index }
+function M.switch_tab(args)
+  local proj = reaper.EnumProjects(args[1])
+  if not proj then error("no project tab " .. tostring(args[1])) end
+  reaper.SelectProjectInstance(proj)
+  return { reaper.GetProjectName(0, "") }
 end
 
 -- Get project name + path + change count. args: {}
@@ -747,16 +776,40 @@ function M.new_project(args)
   return { true }
 end
 
--- Open a project file. args: { full_path }
+-- Open a project file. args: { full_path, new_tab?, prompt_save? }
+-- IMPORTANT: by default we prefix 'noprompt:' so opening never pops a blocking
+-- "save changes?" dialog (which would freeze the bridge). Set prompt_save=true to
+-- restore the prompt. new_tab=true opens in a fresh tab (also avoids prompting).
 function M.open_project(args)
-  reaper.Main_openProject(args[1])
+  local path = args[1]
+  local new_tab = args[2]
+  local prompt_save = args[3]
+  if new_tab then
+    reaper.Main_OnCommand(40859, 0) -- New project tab first
+  end
+  local name = path
+  if not prompt_save then name = "noprompt:" .. name end
+  reaper.Main_openProject(name)
   return { reaper.GetProjectName(0, "") }
 end
 
--- Insert a media file onto the currently selected track at the edit cursor.
--- args: { file_path, mode? }  mode 0 = add to current track (default).
+-- Select only the given track (exclusive). args: { track_sel }
+function M.select_track(args)
+  local tr = M.resolve_track(args[1])
+  if not tr then error("no track for selector " .. tostring(args[1])) end
+  reaper.SetOnlyTrackSelected(tr)
+  return { true }
+end
+
+-- Insert a media file at the edit cursor. args: { file_path, track_sel?, mode? }
+-- If track_sel is given, that track is selected first so the media lands there.
+-- mode 0 = add to current track (default).
 function M.insert_media(args)
-  return { reaper.InsertMedia(args[1], args[2] or 0) }
+  if args[2] ~= nil then
+    local tr = M.resolve_track(args[2])
+    if tr then reaper.SetOnlyTrackSelected(tr) end
+  end
+  return { reaper.InsertMedia(args[1], args[3] or 0) }
 end
 
 return M

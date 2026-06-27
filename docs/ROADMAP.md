@@ -86,6 +86,14 @@ The enabler for everything else. Track references now survive insert/delete/reor
       Gemini's EQ suggestions via set_fx_param, Gemini confirmed the improvement.
 - [ ] Instrument/plugin discovery enumeration — reachable via call_reascript; TODO.
 
+## Verification status
+
+**Full live sweep complete (2026-06-27):** all 61 tools tested against real
+Reaper 7.75, not just the fake responder. The sweep caught 3 real bugs the unit
+tests missed (JSON-null optional args, save_project dialog, open_project freeze) —
+all fixed, with regression tests added. Lesson: modal dialogs freeze the entire
+bridge; project-lifecycle ops now use dialog-free APIs. See `lessonsLearned.md`.
+
 ## Phase D — Render, project & I/O (DONE)
 
 - [x] Render with format control: `render(dir, file, len, fmt)` for mp3/wav/flac

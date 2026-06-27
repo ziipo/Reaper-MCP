@@ -524,9 +524,11 @@ def file_exists(bridge: ReaperBridge, path: str) -> dict:
     return {"exists": bool(_first(bridge.call("MCP.file_exists", path), False))}
 
 
-def save_project(bridge: ReaperBridge, force_save_as: bool = False) -> dict:
-    """Save the current project in place. Returns its name and path."""
-    res = bridge.call("MCP.save_project", force_save_as)
+def save_project(bridge: ReaperBridge, path: str | None = None) -> dict:
+    """Save the project. Pass a full .rpp `path` to save there (no dialog); omit
+    to save in place. Untitled projects require a path (avoids a blocking dialog).
+    """
+    res = bridge.call("MCP.save_project", path)
     return {"name": res[0] if res else None, "path": res[1] if len(res) > 1 else None}
 
 
@@ -541,13 +543,25 @@ def new_project(bridge: ReaperBridge) -> dict:
     return {"new_project": True}
 
 
-def open_project(bridge: ReaperBridge, path: str) -> dict:
-    """Open a project file (.rpp)."""
-    name = _first(bridge.call("MCP.open_project", path), "")
+def open_project(bridge: ReaperBridge, path: str, new_tab: bool = True,
+                 prompt_save: bool = False) -> dict:
+    """Open a project file (.rpp).
+
+    Defaults are dialog-safe: opens in a NEW tab with the save-prompt suppressed,
+    so it never blocks on a modal dialog (which would freeze the bridge). Set
+    new_tab=False to replace the current project, prompt_save=True to be asked.
+    """
+    name = _first(bridge.call("MCP.open_project", path, new_tab, prompt_save), "")
     return {"opened": name}
 
 
-def insert_media(bridge: ReaperBridge, file_path: str, mode: int = 0) -> dict:
-    """Insert a media file onto the selected track at the edit cursor."""
-    res = _first(bridge.call("MCP.insert_media", file_path, mode), None)
+def select_track(bridge: ReaperBridge, track) -> dict:
+    """Exclusively select a track (by index or GUID)."""
+    bridge.call("MCP.select_track", track)
+    return {"selected": track}
+
+
+def insert_media(bridge: ReaperBridge, file_path: str, track=None, mode: int = 0) -> dict:
+    """Insert a media file at the edit cursor, optionally onto a specific track."""
+    res = _first(bridge.call("MCP.insert_media", file_path, track, mode), None)
     return {"inserted": file_path, "result": res}

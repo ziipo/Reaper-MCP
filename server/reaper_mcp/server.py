@@ -399,9 +399,10 @@ def file_exists(path: str) -> dict:
 
 
 @mcp.tool()
-def save_project(force_save_as: bool = False) -> dict:
-    """Save the current project in place. Returns its name and path."""
-    return _guard(tools.save_project, force_save_as)
+def save_project(path: str | None = None) -> dict:
+    """Save the project. Pass a full .rpp path to save there (no dialog); omit to
+    save in place. Untitled projects require a path (avoids a blocking dialog)."""
+    return _guard(tools.save_project, path)
 
 
 @mcp.tool()
@@ -417,15 +418,21 @@ def new_project() -> dict:
 
 
 @mcp.tool()
-def open_project(path: str) -> dict:
-    """Open a project file (.rpp)."""
-    return _guard(tools.open_project, path)
+def open_project(path: str, new_tab: bool = True, prompt_save: bool = False) -> dict:
+    """Open a project file (.rpp). Defaults are dialog-safe (new tab, no prompt)."""
+    return _guard(tools.open_project, path, new_tab, prompt_save)
 
 
 @mcp.tool()
-def insert_media(file_path: str, mode: int = 0) -> dict:
-    """Insert a media file onto the selected track at the edit cursor."""
-    return _guard(tools.insert_media, file_path, mode)
+def select_track(track: object) -> dict:
+    """Exclusively select a track (by index or GUID)."""
+    return _guard(tools.select_track, track)
+
+
+@mcp.tool()
+def insert_media(file_path: str, track: object = None, mode: int = 0) -> dict:
+    """Insert a media file at the edit cursor, optionally onto a specific track."""
+    return _guard(tools.insert_media, file_path, track, mode)
 
 
 @mcp.tool()

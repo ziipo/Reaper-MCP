@@ -330,7 +330,14 @@ class FakeReaper:
         if fn == "MCP.file_exists":
             return [os.path.exists(args[0])]
         if fn == "MCP.save_project":
-            return ["proj", "/tmp/proj"]
+            path = args[0] if args else None
+            return ["proj", path or "/tmp/proj"]
+        if fn == "MCP.select_track":
+            return [True]
+        if fn == "MCP.list_tabs":
+            return [{"tab": 0, "name": "test", "track_count": len(self.tracks)}]
+        if fn == "MCP.switch_tab":
+            return ["test"]
         if fn == "MCP.project_info":
             return [{"name": "proj", "path": "/tmp", "change_count": 1}]
         if fn == "MCP.new_project":
