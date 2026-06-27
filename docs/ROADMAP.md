@@ -106,19 +106,26 @@ bridge; project-lifecycle ops now use dialog-free APIs. See `lessonsLearned.md`.
 - [ ] Stems / region rendering / bitrate via base64 RENDER_FORMAT — TODO (defaults
       only for now); reachable via call_reascript + GetSetProjectInfo.
 
-## Phase E — Robustness & safety (woven through B–D)
+## Phase E — Robustness & safety (DONE)
 
-- [ ] Undo integration: wrap mutating composites in `Undo_BeginBlock/EndBlock`.
-- [ ] Error taxonomy: structured codes (not-found / invalid-arg / reaper-error).
-- [ ] Throughput: auto-coalesce a tool's calls into batches; tune per-tick drain.
-- [ ] Safety rails: confirm destructive ops (delete-all, render overwrite); clamp
-      value ranges.
+- [x] Undo integration: mutating composites wrapped in `Undo_BeginBlock2/EndBlock2`
+      at the dispatcher (read-only ones in `READONLY_COMPOSITES` skip it).
+- [x] Error taxonomy: tool errors prefixed with codes (`[NOT_FOUND]`,
+      `[INVALID_ARG]`, `[BRIDGE_FROZEN]`, `[BRIDGE_DOWN]`, `[TIMEOUT]`, ...).
+- [x] Dialog watchdog: `bridge.py` detects a stale heartbeat mid-call →
+      `BridgeFrozenError` with "dismiss the dialog" (proven live).
+- [x] Safety rails: `delete_all_tracks` needs `confirm=True` (+preview); pan/fx
+      params clamped. Dialog-free `close_tab` (save-to-scratch → close → delete).
+- [ ] Throughput auto-coalescing — deferred (batching is available manually).
 
-## Phase F — Higher-level musical affordances (high value for AI use)
+## Phase F — Higher-level musical affordances (DONE)
 
-- [ ] Theory helpers: chord/scale → MIDI, progressions, humanize/swing/quantize.
-- [ ] Template macros: "make a lofi kit", "set up a vocal chain".
-- [ ] Richer introspection built on `describe_project`.
+- [x] Theory engine `music.py`: note/scale/chord/progression, humanize, swing.
+- [x] Composition tools: `add_chord_progression`, `add_scale_run`, `get_chord`,
+      `get_scale`, `quantize_notes`, `apply_swing`.
+- [x] Validated live: generated ii-V-I-vi in F major; Gemini independently named
+      the exact chords (Gm7-C7-Fmaj7-Dm7) and confirmed the voice leading (t006).
+- [ ] Genre/template macros ("make a lofi kit") — natural next step on this base.
 
 ---
 

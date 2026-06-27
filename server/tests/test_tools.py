@@ -46,10 +46,15 @@ def test_delete_track_bad_index(bridge):
         tools.delete_track(bridge, 5)
 
 
-def test_delete_all_tracks(bridge):
+def test_delete_all_tracks_requires_confirm(bridge):
     for n in ("A", "B"):
         tools.add_track(bridge, n)
-    res = tools.delete_all_tracks(bridge)
+    # Without confirm, it refuses and previews (safety rail).
+    with pytest.raises(ValueError):
+        tools.delete_all_tracks(bridge)
+    assert len(tools.list_tracks(bridge)) == 2
+    # With confirm, it deletes.
+    res = tools.delete_all_tracks(bridge, confirm=True)
     assert res["deleted"] == 2
     assert tools.list_tracks(bridge) == []
 

@@ -761,6 +761,51 @@ function M.switch_tab(args)
   return { reaper.GetProjectName(0, "") }
 end
 
+-- Close a project tab WITHOUT a save-changes dialog (which would freeze the
+-- bridge). args: { tab_index?, discard? }
+--   tab_index: which tab (default current/active).
+--   discard:   if true (default), a DIRTY project is auto-handled: save it to a
+--              throwaway .rpp in the bridge's scratch area, close the now-clean
+--              tab (no prompt), then DELETE the throwaway file. A clean project
+--              just closes. If false and the project is dirty, we error rather
+--              than risk a freeze.
+function M.close_tab(args)
+  local idx = args[1]
+  local discard = args[2]
+  if discard == nil then discard = true end
+  if idx ~= nil then
+    local proj = reaper.EnumProjects(idx)
+    if not proj then error("no project tab " .. tostring(idx)) end
+    reaper.SelectProjectInstance(proj)
+  end
+
+  -- IMPORTANT: IsProjectDirty() does NOT reliably report unsaved edits (it
+  -- returned 0 right after inserting a track in testing), yet the close action
+  -- still prompts. So when discard=true we UNCONDITIONALLY save to a throwaway
+  -- .rpp first — that guarantees the project has a saved file and closes silently
+  -- — then delete the throwaway after closing.
+  local scratch_files = nil
+  if discard then
+    local sep = package.config:sub(1, 1)
+    local dir = reaper.GetResourcePath() .. sep .. "Scripts" .. sep ..
+                "mcp_bridge" .. sep .. "scratch_tabs"
+    reaper.RecursiveCreateDirectory(dir, 0)
+    local base = dir .. sep .. "close_" ..
+                 tostring(reaper.time_precise()):gsub("%.", "_")
+    local rpp = base .. ".rpp"
+    reaper.Main_SaveProjectEx(0, rpp, 0)
+    scratch_files = { rpp, base .. "-prox.rpp" }
+  end
+
+  reaper.Main_OnCommand(40860, 0) -- Close current tab (saved → no prompt)
+
+  -- Delete the throwaway save artifacts (best-effort; ignore failures).
+  if scratch_files then
+    for _, f in ipairs(scratch_files) do os.remove(f) end
+  end
+  return { true }
+end
+
 -- Get project name + path + change count. args: {}
 function M.project_info(args)
   return { {

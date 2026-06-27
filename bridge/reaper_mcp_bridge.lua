@@ -335,6 +335,16 @@ local function normalize_args(args)
   return out
 end
 
+-- Composites that only READ state (no undo point needed). Anything not listed
+-- here is treated as mutating and wrapped in an undo block.
+local READONLY_COMPOSITES = {
+  resolve_track = true, resolve_item = true,
+  describe_project = true, get_track_guid = true, get_track_value = true,
+  list_fx_params = true, read_envelope = true, list_sends = true,
+  get_notes = true, list_markers = true, list_tabs = true,
+  switch_tab = true, project_info = true, file_exists = true,
+}
+
 local function dispatch(call)
   local fn = call.fn
   if type(fn) ~= "string" then return false, "missing 'fn'" end
@@ -350,7 +360,13 @@ local function dispatch(call)
   if composite then
     local cf = BUILTIN[composite] or MCP[composite]
     if type(cf) ~= "function" then return false, "unknown composite: " .. fn end
+    -- Wrap MUTATING composites in an undo block so each tool action is one
+    -- atomic, named, reversible step in Reaper's history. Read-only composites
+    -- (and BUILTIN reload/ping) are skipped — no point polluting undo history.
+    local mutates = not READONLY_COMPOSITES[composite] and not BUILTIN[composite]
+    if mutates then reaper.Undo_BeginBlock2(0) end
     local packed = table.pack(pcall(cf, args))
+    if mutates then reaper.Undo_EndBlock2(0, "MCP: " .. composite, -1) end
     if not packed[1] then return false, tostring(packed[2]) end
     return true, packed[2] or {}
   end

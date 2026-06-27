@@ -52,8 +52,23 @@ within each section.
   Guidance: prefer dialog-free APIs (`Main_SaveProjectEx`). For `open_project`,
   save/clear the current project first, or open in a NEW tab (action 40859 then
   load) so there's nothing to prompt about. Treat any project-lifecycle op as
-  potentially-blocking. A future hardening (Phase E): a watchdog that detects a
-  stale heartbeat mid-call and surfaces "Reaper may be showing a dialog."
+  potentially-blocking.
+  - **Closing an UNSAVED tab also prompts** (action 40860 "Close project tab" →
+    "save changes?"). Same freeze. Hit again during Phase F scratch cleanup. The
+    Phase E watchdog (now live) caught it correctly and fast-failed with
+    `BridgeFrozenError`. TODO: a dialog-free `close_tab` (mark project clean via
+    `Main_SaveProjectEx(0,"",..)` or set the no-prompt flag before closing).
+  - **The watchdog works:** instead of a generic timeout, mid-call freezes now
+    raise `BridgeFrozenError` immediately with "dismiss the dialog" guidance.
+  - **`IsProjectDirty()` LIES about unsaved edits** (2026-06-27). It returned 0
+    right after inserting a track, yet closing the tab still prompted. So you
+    cannot gate "is it safe to close?" on `IsProjectDirty`. The working
+    `close_tab` (discard=true) therefore ALWAYS saves to a throwaway .rpp in
+    `Scripts/mcp_bridge/scratch_tabs/` first (guaranteeing a clean close, no
+    prompt), then deletes the throwaway after closing. This is the safe pattern
+    for any scratch-tab teardown: save → close → delete. (Cost me several repeated
+    freezes by trusting the dirty flag — diagnose by isolating the assumption
+    next time instead of re-running the action that freezes.)
 
 ### Testing & verification
 
@@ -97,6 +112,35 @@ within each section.
   internally; convert with `MIDI_GetPPQPosFromProjQN` / `MIDI_GetProjQNFromPPQPos`.
   Our tools expose quarter-note (QN) positions, which are tempo-independent and
   far easier to reason about. 1 bar of 4/4 = 4 QN.
+
+### Robustness (Phase E)
+
+- **Every mutating composite is now wrapped in an undo block** (dispatcher-level,
+  via `Undo_BeginBlock2`/`EndBlock2`). So each tool action = one named, atomic
+  Ctrl+Z step in Reaper. Read-only composites are listed in `READONLY_COMPOSITES`
+  and skip undo. When adding a read-only composite, add it to that set.
+
+- **Dialog watchdog:** `bridge.py` now watches the heartbeat *during* a call; if
+  it goes stale mid-flight it raises `BridgeFrozenError` ("Reaper is likely
+  showing a dialog — dismiss it") instead of waiting out the full timeout.
+
+- **Structured error codes:** tool errors are prefixed with a code
+  (`[NOT_FOUND]`, `[INVALID_ARG]`, `[BRIDGE_FROZEN]`, `[BRIDGE_DOWN]`,
+  `[TIMEOUT]`, `[NEEDS_PATH]`, `[REAPER_ERROR]`) so the model can branch on the
+  class instead of parsing prose.
+
+- **Destructive ops are gated:** `delete_all_tracks` requires `confirm=True` and
+  otherwise returns a preview of what would be deleted. Value ranges are clamped
+  (pan -1..1, fx param 0..1) with a small-overshoot tolerance.
+
+### Composition tools (Phase F)
+
+- **Write music, not note numbers.** Prefer `add_chord_progression`
+  (roman numerals in a key → diatonic chords), `add_scale_run`, `get_chord`,
+  `get_scale` over hand-placing pitches. `quantize_notes` and `apply_swing`
+  reshape an existing clip. Theory lives in `music.py` (pure, no Reaper).
+
+- **C4 = 60** (Cockos convention). 1 bar of 4/4 = 4 QN.
 
 ### Workflow tips
 

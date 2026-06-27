@@ -5,21 +5,53 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from . import gemini, tools
-from .bridge import BridgeError, ReaperBridge
+from .bridge import BridgeError, BridgeFrozenError, ReaperBridge
 
 mcp = FastMCP("reaper")
 bridge = ReaperBridge()
 
 
+def _classify(msg: str) -> str:
+    """Map a raw error message to a structured code the model can act on."""
+    m = msg.lower()
+    if "stale" in m or "froze" in m or "dialog" in m:
+        return "BRIDGE_FROZEN"
+    if "not running" in m or "heartbeat" in m:
+        return "BRIDGE_DOWN"
+    if "timed out" in m:
+        return "TIMEOUT"
+    if "no track" in m or "no item" in m or "not found" in m or "no param" in m:
+        return "NOT_FOUND"
+    if "invalid" in m or "must be" in m or "expected" in m or "out of range" in m:
+        return "INVALID_ARG"
+    if "untitled" in m:
+        return "NEEDS_PATH"
+    return "REAPER_ERROR"
+
+
 def _guard(fn, *args, **kwargs):
-    """Run a tool, converting bridge failures into clean MCP tool errors."""
+    """Run a tool, converting bridge failures into clean, classified MCP errors.
+
+    Errors are prefixed with a structured code (NOT_FOUND, INVALID_ARG,
+    BRIDGE_FROZEN, ...) so the model can recover intelligently rather than parse
+    free text.
+    """
     try:
         return fn(bridge, *args, **kwargs)
+    except BridgeFrozenError as e:
+        raise RuntimeError(f"[BRIDGE_FROZEN] {e}") from e
     except BridgeError as e:
-        # Surfaced to the model as a tool error it can reason about / report.
-        raise RuntimeError(f"Reaper bridge error: {e}") from e
+        raise RuntimeError(f"[{_classify(str(e))}] {e}") from e
     except ValueError as e:
-        raise RuntimeError(str(e)) from e
+        raise RuntimeError(f"[{_classify(str(e))}] {e}") from e
+
+
+def _guard_pure(fn, *args, **kwargs):
+    """Run a pure (no-Reaper) helper, classifying ValueErrors but skipping the bridge."""
+    try:
+        return fn(*args, **kwargs)
+    except ValueError as e:
+        raise RuntimeError(f"[INVALID_ARG] {e}") from e
 
 
 @mcp.tool()
@@ -65,9 +97,9 @@ def delete_track(index: int) -> dict:
 
 
 @mcp.tool()
-def delete_all_tracks() -> dict:
-    """Delete every track in the current project."""
-    return _guard(tools.delete_all_tracks)
+def delete_all_tracks(confirm: bool = False) -> dict:
+    """Delete every track. Destructive — must pass confirm=True (returns a preview otherwise)."""
+    return _guard(tools.delete_all_tracks, confirm)
 
 
 @mcp.tool()
@@ -424,6 +456,25 @@ def open_project(path: str, new_tab: bool = True, prompt_save: bool = False) -> 
 
 
 @mcp.tool()
+def list_tabs() -> list[dict]:
+    """List all open project tabs (index, name, track count)."""
+    return _guard(tools.list_tabs)
+
+
+@mcp.tool()
+def switch_tab(tab_index: int) -> dict:
+    """Switch the active project tab by index."""
+    return _guard(tools.switch_tab, tab_index)
+
+
+@mcp.tool()
+def close_tab(tab_index: int | None = None, discard: bool = True) -> dict:
+    """Close a project tab without a save dialog. discard=True auto-saves a dirty
+    tab to a throwaway .rpp, closes it, and deletes the throwaway (no leftovers)."""
+    return _guard(tools.close_tab, tab_index, discard)
+
+
+@mcp.tool()
 def select_track(track: object) -> dict:
     """Exclusively select a track (by index or GUID)."""
     return _guard(tools.select_track, track)
@@ -433,6 +484,62 @@ def select_track(track: object) -> dict:
 def insert_media(file_path: str, track: object = None, mode: int = 0) -> dict:
     """Insert a media file at the edit cursor, optionally onto a specific track."""
     return _guard(tools.insert_media, file_path, track, mode)
+
+
+# -- Phase F: musical affordances --------------------------------------------
+
+
+@mcp.tool()
+def get_scale(root: str, scale: str = "major", octaves: int = 1,
+              start_octave: int = 4) -> dict:
+    """Get the MIDI pitches of a scale (e.g. root='D', scale='minor'). No Reaper call."""
+    return _guard_pure(tools.get_scale, root, scale, octaves, start_octave)
+
+
+@mcp.tool()
+def get_chord(root: str, quality: str = "maj", octave: int = 4,
+              inversion: int = 0) -> dict:
+    """Get the MIDI pitches of a chord (e.g. root='C', quality='maj7'). No Reaper call."""
+    return _guard_pure(tools.get_chord, root, quality, octave, inversion)
+
+
+@mcp.tool()
+def add_chord_progression(
+    track: object, root: str, scale: str, romans: list[str],
+    bars_per_chord: float = 1.0, octave: int = 4, seventh: bool = False,
+    vel: int = 70, humanize_amount: float = 0.0,
+) -> dict:
+    """Write a diatonic chord progression to a track as a MIDI clip.
+
+    romans e.g. ["i","iv","v","VI"]; quality is derived from the key. Each chord
+    lasts bars_per_chord bars (4/4). humanize_amount>0 adds subtle timing/vel feel.
+    """
+    return _guard(tools.add_chord_progression, track, root, scale, romans,
+                  bars_per_chord, octave, seventh, vel, humanize_amount)
+
+
+@mcp.tool()
+def add_scale_run(
+    track: object, root: str, scale: str, octaves: int = 1, start_octave: int = 4,
+    note_qn: float = 0.5, vel: int = 80, start_qn: float = 0.0,
+) -> dict:
+    """Write an ascending scale run to a track (one note per note_qn)."""
+    return _guard(tools.add_scale_run, track, root, scale, octaves, start_octave,
+                  note_qn, vel, start_qn)
+
+
+@mcp.tool()
+def quantize_notes(track: object, item_index: int, grid_qn: float = 0.25,
+                   strength: float = 1.0) -> dict:
+    """Quantize an item's notes toward a grid (strength 0..1)."""
+    return _guard(tools.quantize_notes, track, item_index, grid_qn, strength)
+
+
+@mcp.tool()
+def apply_swing(track: object, item_index: int, amount: float = 0.5,
+                grid_qn: float = 0.5) -> dict:
+    """Apply swing to an item's notes (delays off-grid subdivisions)."""
+    return _guard(tools.apply_swing, track, item_index, amount, grid_qn)
 
 
 @mcp.tool()

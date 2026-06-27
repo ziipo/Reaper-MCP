@@ -9,7 +9,19 @@ from __future__ import annotations
 
 import math
 
+from . import music
 from .bridge import Call, ReaperBridge
+
+
+def _clamp(value: float, lo: float, hi: float, name: str) -> float:
+    """Clamp a value into [lo, hi], raising if it's wildly out of range.
+
+    A small overshoot is silently clamped (floating-point slop); a gross
+    out-of-range value is a likely caller error, so we surface it.
+    """
+    if value < lo - 0.5 or value > hi + 0.5:
+        raise ValueError(f"{name}={value} is out of range [{lo}, {hi}]")
+    return max(lo, min(hi, value))
 
 
 # Reaper's D_VOL is a linear amplitude factor (1.0 == 0 dB). Users think in dB,
@@ -106,9 +118,19 @@ def delete_track(bridge: ReaperBridge, index: int) -> dict:
     return {"deleted_index": index, "remaining": count - 1}
 
 
-def delete_all_tracks(bridge: ReaperBridge) -> dict:
-    """Delete every track in the project (deletes from the end to keep indices stable)."""
+def delete_all_tracks(bridge: ReaperBridge, confirm: bool = False) -> dict:
+    """Delete every track in the project. Destructive: requires confirm=True.
+
+    Returns a preview (track names that would be deleted) when confirm is False,
+    so the caller can show the user before committing.
+    """
     count = _first(bridge.call("CountTracks", 0), 0)
+    if not confirm:
+        names = [t["name"] for t in list_tracks(bridge)]
+        raise ValueError(
+            f"Refusing to delete all {count} tracks without confirm=True. "
+            f"Tracks that would be deleted: {names}. Call again with confirm=True."
+        )
     for i in range(count - 1, -1, -1):
         bridge.call("DeleteTrack", i)
     bridge.call("TrackList_AdjustWindows", False)
@@ -271,6 +293,7 @@ def set_track_color(bridge: ReaperBridge, track, r: int, g: int, b: int) -> dict
 
 def set_track_pan(bridge: ReaperBridge, track, pan: float) -> dict:
     """Set track pan (-1.0 left .. 0 center .. 1.0 right)."""
+    pan = _clamp(pan, -1.0, 1.0, "pan")
     bridge.call("MCP.set_track_value", track, "D_PAN", pan)
     return {"track": track, "pan": pan}
 
@@ -427,6 +450,7 @@ def set_fx_param(bridge: ReaperBridge, track, fx_index: int,
 
     Returns the resolved param index, full name, and formatted value (e.g. "-1.5 dB").
     """
+    value_norm = _clamp(value_norm, 0.0, 1.0, "value_norm")
     res = bridge.call("MCP.set_fx_param_by_name", track, fx_index, param_name, value_norm)
     return {
         "param_index": res[0] if res else None,
@@ -555,6 +579,30 @@ def open_project(bridge: ReaperBridge, path: str, new_tab: bool = True,
     return {"opened": name}
 
 
+def list_tabs(bridge: ReaperBridge) -> list[dict]:
+    """List all open project tabs (index, name, track count)."""
+    return bridge.call("MCP.list_tabs")
+
+
+def switch_tab(bridge: ReaperBridge, tab_index: int) -> dict:
+    """Switch the active project tab by index."""
+    name = _first(bridge.call("MCP.switch_tab", tab_index), "")
+    return {"active": name, "tab": tab_index}
+
+
+def close_tab(bridge: ReaperBridge, tab_index: int | None = None,
+              discard: bool = True) -> dict:
+    """Close a project tab without a save dialog.
+
+    With discard=True (default), a dirty tab is auto-handled: saved to a throwaway
+    .rpp, closed cleanly, then the throwaway is deleted — no dialog, no leftovers.
+    With discard=False, closing a dirty tab raises rather than risk a modal dialog
+    that would freeze the bridge.
+    """
+    bridge.call("MCP.close_tab", tab_index, discard)
+    return {"closed_tab": tab_index}
+
+
 def select_track(bridge: ReaperBridge, track) -> dict:
     """Exclusively select a track (by index or GUID)."""
     bridge.call("MCP.select_track", track)
@@ -565,3 +613,96 @@ def insert_media(bridge: ReaperBridge, file_path: str, track=None, mode: int = 0
     """Insert a media file at the edit cursor, optionally onto a specific track."""
     res = _first(bridge.call("MCP.insert_media", file_path, track, mode), None)
     return {"inserted": file_path, "result": res}
+
+
+# -- Phase F: musical affordances --------------------------------------------
+# These compose theory (music.py) with the MIDI tools so the model can write
+# musically instead of placing raw note numbers.
+
+
+def get_scale(root: str, scale: str = "major", octaves: int = 1,
+              start_octave: int = 4) -> dict:
+    """Return the MIDI pitches of a scale (no Reaper interaction)."""
+    return {"root": root, "scale": scale,
+            "pitches": music.scale_notes(root, scale, octaves, start_octave)}
+
+
+def get_chord(root: str, quality: str = "maj", octave: int = 4,
+              inversion: int = 0) -> dict:
+    """Return the MIDI pitches of a chord (no Reaper interaction)."""
+    return {"root": root, "quality": quality,
+            "pitches": music.chord_notes(root, quality, octave, inversion)}
+
+
+def add_chord_progression(
+    bridge: ReaperBridge, track, root: str, scale: str, romans: list[str],
+    bars_per_chord: float = 1.0, octave: int = 4, seventh: bool = False,
+    vel: int = 70, humanize_amount: float = 0.0,
+) -> dict:
+    """Write a diatonic chord progression to a track as one MIDI clip.
+
+    `romans` e.g. ["i","iv","v","VI"]. Each chord lasts `bars_per_chord` bars
+    (4/4). Quality is derived from the key. Set humanize_amount>0 for subtle feel.
+    """
+    chords = music.progression(root, scale, romans, octave, seventh)
+    step_qn = bars_per_chord * 4.0
+    notes = music.make_notes(chords, step_qn=step_qn, vel=vel)
+    if humanize_amount > 0:
+        notes = music.humanize(notes, timing_qn=0.02 * humanize_amount,
+                               vel_amount=int(12 * humanize_amount))
+    total_qn = step_qn * len(chords)
+    return add_midi_clip(bridge, track, 0.0, total_qn, notes)
+
+
+def add_scale_run(
+    bridge: ReaperBridge, track, root: str, scale: str, octaves: int = 1,
+    start_octave: int = 4, note_qn: float = 0.5, vel: int = 80,
+    start_qn: float = 0.0,
+) -> dict:
+    """Write an ascending scale run (one note per `note_qn`) to a track."""
+    pitches = music.scale_notes(root, scale, octaves, start_octave)
+    notes = [
+        {"start_qn": start_qn + i * note_qn,
+         "end_qn": start_qn + i * note_qn + note_qn,
+         "pitch": p, "vel": vel}
+        for i, p in enumerate(pitches)
+    ]
+    total = start_qn + len(pitches) * note_qn
+    return add_midi_clip(bridge, track, start_qn, total, notes)
+
+
+def quantize_notes(bridge: ReaperBridge, track, item_index: int,
+                   grid_qn: float = 0.25, strength: float = 1.0) -> dict:
+    """Snap an item's note starts toward a grid. strength 0..1 (1=hard snap)."""
+    notes = get_notes(bridge, track, item_index)
+    if not notes:
+        return {"quantized": 0}
+    # delete and re-add quantized (simplest reliable path through current tools)
+    for n in sorted(notes, key=lambda x: -x["index"]):
+        delete_note(bridge, track, item_index, n["index"])
+    new = []
+    for n in notes:
+        target = round(n["start_qn"] / grid_qn) * grid_qn
+        start = n["start_qn"] + (target - n["start_qn"]) * strength
+        dur = n["end_qn"] - n["start_qn"]
+        new.append({"start_qn": start, "end_qn": start + dur,
+                    "pitch": n["pitch"], "vel": n["vel"], "chan": n.get("chan", 0)})
+    add_notes(bridge, track, item_index, new)
+    return {"quantized": len(new), "grid_qn": grid_qn, "strength": strength}
+
+
+def apply_swing(bridge: ReaperBridge, track, item_index: int,
+                amount: float = 0.5, grid_qn: float = 0.5) -> dict:
+    """Apply swing to an item's notes (delays off-grid subdivisions)."""
+    notes = get_notes(bridge, track, item_index)
+    if not notes:
+        return {"swung": 0}
+    swung = music.swing(
+        [{"start_qn": n["start_qn"], "end_qn": n["end_qn"],
+          "pitch": n["pitch"], "vel": n["vel"]} for n in notes],
+        amount=amount, grid_qn=grid_qn,
+    )
+    for n in sorted(notes, key=lambda x: -x["index"]):
+        delete_note(bridge, track, item_index, n["index"])
+    add_notes(bridge, track, item_index, swung)
+    return {"swung": len(swung), "amount": amount}

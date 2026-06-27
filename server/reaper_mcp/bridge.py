@@ -28,6 +28,14 @@ class BridgeError(RuntimeError):
     """Raised when the bridge is unreachable, times out, or a call fails."""
 
 
+class BridgeFrozenError(BridgeError):
+    """The request was sent but the bridge's heartbeat went stale mid-flight.
+
+    Almost always means Reaper is showing a modal dialog (which freezes the GUI
+    thread and the defer loop). A human must dismiss it before the bridge resumes.
+    """
+
+
 def default_bridge_dir() -> Path:
     """Resolve the bridge data dir inside Reaper's resource path (macOS default).
 
@@ -122,10 +130,21 @@ class ReaperBridge:
                     # if we catch a transient read, retry until the deadline.
                     time.sleep(POLL_INTERVAL)
                     continue
-                finally:
-                    pass
                 resp_path.unlink(missing_ok=True)
                 return data
+            # Watchdog: if the heartbeat goes stale while we wait, the defer loop
+            # has stopped ticking — almost always a modal dialog froze the GUI
+            # thread. Fail fast with an actionable message instead of waiting out
+            # the full timeout, and don't delete the request (it'll be processed
+            # once the dialog is dismissed).
+            age = self.heartbeat_age()
+            if age is not None and age > HEARTBEAT_MAX_AGE:
+                raise BridgeFrozenError(
+                    f"Reaper stopped responding mid-call (heartbeat {age:.1f}s "
+                    "stale). It is most likely showing a modal dialog that froze "
+                    "the bridge — dismiss the dialog in Reaper to resume. Prefer "
+                    "dialog-free tools for project/render operations."
+                )
             time.sleep(POLL_INTERVAL)
         # Clean up our request if it was never consumed, to avoid orphans.
         (self.bridge_dir / f"{req_id}.req.json").unlink(missing_ok=True)
